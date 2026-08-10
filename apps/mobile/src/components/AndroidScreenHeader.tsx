@@ -63,14 +63,15 @@ export function AndroidScreenHeader(props: {
         paddingTop: props.embedded ? 8 : Math.max(insets.top, 12),
       }}
     >
-      <View className="min-h-12 flex-row items-center gap-2">
+      <View className="min-h-12 flex-row items-center gap-1">
         {props.onBack ? (
           <Pressable
             accessibilityLabel="Navigate up"
             accessibilityRole="button"
-            hitSlop={8}
+            collapsable={false}
+            hitSlop={12}
             onPress={props.onBack}
-            className="-mr-2 size-11 items-center justify-center"
+            className="h-12 w-12 shrink-0 items-center justify-center"
           >
             <SymbolView
               name="chevron.left"

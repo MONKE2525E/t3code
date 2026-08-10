@@ -715,6 +715,15 @@ function ThreadRouteContent(
         onPress: handleToggleInspector,
       });
     }
+    if (layout.usesSplitView) {
+      actions.push({
+        accessibilityLabel: panes.primarySidebarVisible
+          ? "Hide thread sidebar"
+          : "Show thread sidebar",
+        icon: panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left",
+        onPress: togglePrimarySidebar,
+      });
+    }
     return actions;
   }, [
     fileInspector.supported,
@@ -722,9 +731,12 @@ function ThreadRouteContent(
     handleOpenTerminal,
     handleOpenGitInspector,
     handleToggleInspector,
+    layout.usesSplitView,
+    panes.primarySidebarVisible,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
+    togglePrimarySidebar,
   ]);
 
   // Deep links / cold starts land with Thread as the ONLY route, where the
