@@ -235,6 +235,14 @@ describe("createAppUpdateLaunchCheck", () => {
     expect(checkOnLaunch()).toBeUndefined();
     expect(client.checkForUpdateAsync).not.toHaveBeenCalled();
   });
+
+  it("does not check for updates when running from Metro", () => {
+    const client = makeUpdateClient();
+    const checkOnLaunch = createAppUpdateLaunchCheck(client, true);
+
+    expect(checkOnLaunch()).toBeUndefined();
+    expect(client.checkForUpdateAsync).not.toHaveBeenCalled();
+  });
 });
 
 describe("registerHiddenUpdateTap", () => {

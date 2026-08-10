@@ -215,11 +215,12 @@ function reportUpdateFailure(
 
 export function createAppUpdateLaunchCheck(
   client: AppUpdateClient = Updates,
+  isDevelopmentBuild = typeof __DEV__ !== "undefined" && __DEV__,
 ): () => Promise<void> | undefined {
   let started = false;
 
   return () => {
-    if (started || !client.isEnabled) return undefined;
+    if (started || !client.isEnabled || isDevelopmentBuild) return undefined;
     started = true;
     return runAppUpdateCheck({ client });
   };

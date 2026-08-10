@@ -1099,21 +1099,23 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           title="Terminal"
           subtitle={headerSubtitle}
           onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
+          actions={
+            layout.usesSplitView
+              ? [
+                  {
+                    accessibilityLabel: panes.primarySidebarVisible
+                      ? "Hide thread sidebar"
+                      : "Show thread sidebar",
+                    icon: panes.primarySidebarVisible
+                      ? "arrow.up.left.and.arrow.down.right"
+                      : "sidebar.left",
+                    onPress: togglePrimarySidebar,
+                  },
+                ]
+              : undefined
+          }
           trailing={
             <>
-              {layout.usesSplitView ? (
-                <AndroidHeaderIconButton
-                  accessibilityLabel={
-                    panes.primarySidebarVisible ? "Maximize terminal" : "Show threads"
-                  }
-                  icon={
-                    panes.primarySidebarVisible
-                      ? "arrow.up.left.and.arrow.down.right"
-                      : "sidebar.left"
-                  }
-                  onPress={togglePrimarySidebar}
-                />
-              ) : null}
               {isEnvironmentReady ? (
                 <ControlPillMenu
                   actions={androidTerminalMenuActions}

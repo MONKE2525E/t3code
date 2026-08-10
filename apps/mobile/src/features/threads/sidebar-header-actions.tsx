@@ -11,7 +11,7 @@ export interface SidebarHeaderActionsProps {
 
 function FallbackHeaderButton(props: {
   readonly accessibilityLabel: string;
-  readonly icon: "gearshape" | "square.and.pencil";
+  readonly icon: "gearshape";
   readonly grouped?: boolean;
   readonly onPress: () => void;
 }) {
@@ -46,7 +46,7 @@ function FallbackHeaderButton(props: {
 
 export function SidebarHeaderActions(props: SidebarHeaderActionsProps) {
   return (
-    <View className="flex-row items-center gap-0.5">
+    <View className="flex-row items-center">
       <FallbackHeaderButton
         accessibilityLabel="Open settings"
         grouped={props.grouped}

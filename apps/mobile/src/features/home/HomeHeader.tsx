@@ -208,7 +208,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
         }}
       >
         <View className="w-full max-w-[720px] self-center gap-3">
-          <View className="flex-row items-center gap-2.5">
+          <View className="flex-row items-center gap-1">
             {/* Brand slot doubles as the connection status surface: while an
                 environment reconnects, the lockup fades to a status label in
                 place (no layout shift in the list below). */}
@@ -216,7 +216,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
               grow
               onPress={props.onOpenEnvironments}
               brand={
-                <View className="flex-row items-center gap-2">
+                <View className="min-w-0 flex-1 flex-row items-center gap-2">
                   {/* Mirrors the desktop SidebarBrand: T3 mark + muted "Code". */}
                   <T3Wordmark color={iconColor} height={15} />
                   <RNText className="-ml-0.5 text-[21px] font-t3-medium tracking-[-0.5px] text-foreground-muted">
@@ -233,13 +233,14 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
 
             <ControlPillMenu
               actions={menuActions}
+              className="size-11 shrink-0"
               isAnchoredToRight
               onPressAction={handleMenuAction}
             >
               <Pressable
                 accessibilityLabel="Filter and sort threads"
                 accessibilityRole="button"
-                className="size-11 items-center justify-center rounded-full bg-subtle"
+                className="size-full items-center justify-center rounded-full bg-subtle"
               >
                 <SymbolView
                   name={
@@ -253,12 +254,10 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
                 />
               </Pressable>
             </ControlPillMenu>
-            {/* Built identically to the filter button so the two circles
-                match exactly (ControlPill sizes via Tailwind classes and
-                resolves to a different box). */}
             <Pressable
               accessibilityLabel="Open settings"
               accessibilityRole="button"
+              hitSlop={8}
               onPress={props.onOpenSettings}
               className="size-11 items-center justify-center rounded-full bg-subtle"
             >
