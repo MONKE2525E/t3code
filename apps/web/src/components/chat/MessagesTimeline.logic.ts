@@ -943,6 +943,13 @@ export function deriveMessagesTimelineRows(input: {
     ) {
       break;
     }
+    const laterEntry = activeToolEntries[0]?.entry;
+    if (
+      laterEntry &&
+      isReasoningSegmentEntry(entry.entry) !== isReasoningSegmentEntry(laterEntry)
+    ) {
+      break;
+    }
     activeToolEntries.unshift(entry);
   }
   const visibleActiveToolEntries = omitSupersededLifecycleMarkers(

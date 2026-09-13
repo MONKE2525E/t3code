@@ -3398,6 +3398,23 @@ describe("reasoning segments", () => {
       turnId,
       createdAt: time(second),
     }) as unknown as OrchestrationThreadActivity;
+  const toolLifecycleActivity = (
+    id: string,
+    toolCallId: string,
+    kind: "tool.updated" | "tool.completed",
+    second: number,
+  ) =>
+    ({
+      ...toolActivity(id, second),
+      kind,
+      payload: {
+        itemType: "command_execution",
+        toolCallId,
+        status: kind === "tool.completed" ? "completed" : "inProgress",
+        title: kind === "tool.completed" ? "Ran command" : "Running command",
+        command: "git status",
+      },
+    }) as unknown as OrchestrationThreadActivity;
   const userMessage: ChatMessage = {
     id: MessageId.make("segment-user"),
     role: "user",
@@ -3464,6 +3481,72 @@ describe("reasoning segments", () => {
         .filter((row) => row.kind === "work" || row.kind === "work-toggle")
         .map((row) => (row.kind === "work" ? row.displayLabel : row.summary)),
     ).toEqual(["Thought for 4.0s", "Ran 3 commands", "Thought for 7.0s", "Ran 2 commands"]);
+  });
+
+  it("keeps settled history monotonic while the live tail alternates", () => {
+    const commentary = assistantMessage("commentary", 3);
+    const steps: OrchestrationThreadActivity[] = [
+      thinkingActivity("thought-a-start", "tool.updated", 1, "thought-a"),
+      thinkingActivity("thought-a-end", "tool.completed", 2, "thought-a"),
+      toolLifecycleActivity("tool-a-start", "tool-a", "tool.updated", 4),
+      toolLifecycleActivity("tool-a-end", "tool-a", "tool.completed", 5),
+      toolLifecycleActivity("tool-b-start", "tool-b", "tool.updated", 6),
+      toolLifecycleActivity("tool-b-end", "tool-b", "tool.completed", 7),
+      thinkingActivity("thought-b-start", "tool.updated", 8, "thought-b"),
+      thinkingActivity("thought-b-end", "tool.completed", 9, "thought-b"),
+      toolLifecycleActivity("tool-c-start", "tool-c", "tool.updated", 10),
+      toolLifecycleActivity("tool-c-end", "tool-c", "tool.completed", 11),
+      thinkingActivity("thought-c-start", "tool.updated", 12, "thought-c"),
+    ];
+    const stages = [
+      { activityCount: 1, commentary: false },
+      { activityCount: 2, commentary: false },
+      { activityCount: 2, commentary: true },
+      ...steps.slice(2).map((_, index) => ({ activityCount: index + 3, commentary: true })),
+    ];
+    let settledHistory: string[] = [];
+    let finalRows: ReturnType<typeof deriveMessagesTimelineRows> = [];
+
+    for (const stage of stages) {
+      const messages = stage.commentary ? [userMessage, commentary] : [userMessage];
+      finalRows = deriveMessagesTimelineRows(
+        liveInput(messages, deriveWorkLogEntries(steps.slice(0, stage.activityCount))),
+      );
+      const history = finalRows
+        .filter(
+          (row) =>
+            row.kind === "work" ||
+            row.kind === "work-toggle" ||
+            (row.kind === "message" && row.message.role === "assistant"),
+        )
+        .map((row) =>
+          row.kind === "work"
+            ? `${row.id}:${row.displayLabel}`
+            : row.kind === "work-toggle"
+              ? `${row.id}:${row.summary}`
+              : row.kind === "message"
+                ? `${row.id}:${row.message.text}`
+                : row.id,
+        );
+      expect(history.slice(0, settledHistory.length)).toEqual(settledHistory);
+      settledHistory = history;
+      expect(
+        finalRows.filter((row) => row.kind === "work-live" || row.kind === "thinking"),
+      ).toHaveLength(1);
+    }
+
+    expect(
+      finalRows
+        .filter((row) => row.kind === "work" || row.kind === "work-toggle")
+        .map((row) => (row.kind === "work" ? row.displayLabel : row.summary)),
+    ).toEqual(["Thought for 1.0s", "Ran 2 commands", "Thought for 1.0s", "Ran command"]);
+
+    const restoredRows = deriveMessagesTimelineRows(settledInput(deriveWorkLogEntries(steps)));
+    expect(
+      restoredRows
+        .filter((row) => row.kind === "work" || row.kind === "work-toggle")
+        .map((row) => (row.kind === "work" ? row.displayLabel : row.summary)),
+    ).toEqual(["Thought for 1.0s", "Ran 2 commands", "Thought for 1.0s", "Ran command", "Thought"]);
   });
 
   it("keeps twenty-plus tool calls in small groups when thoughts intervene", () => {

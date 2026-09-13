@@ -3538,6 +3538,101 @@ describe("reasoning segments", () => {
     ]);
   });
 
+  it("keeps settled history monotonic while the live tail alternates", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const commentary = {
+      id: MessageId.make("monotonic-commentary"),
+      role: "assistant" as const,
+      text: "Checking the next step.",
+      turnId,
+      streaming: false,
+      createdAt: at(3),
+      updatedAt: at(3),
+    };
+    const steps = [
+      thinkingActivity("thought-a-start", "tool.updated", 1, "thought-a"),
+      thinkingActivity("thought-a-end", "tool.completed", 2, "thought-a"),
+      toolActivity("tool-a", 5),
+      toolActivity("tool-b", 7),
+      thinkingActivity("thought-b-start", "tool.updated", 8, "thought-b"),
+      thinkingActivity("thought-b-end", "tool.completed", 9, "thought-b"),
+      toolActivity("tool-c", 11),
+      thinkingActivity("thought-c-start", "tool.updated", 12, "thought-c"),
+    ];
+    const stages = [
+      { activityCount: 1, commentary: false },
+      { activityCount: 2, commentary: false },
+      { activityCount: 2, commentary: true },
+      ...steps.slice(2).map((_, index) => ({ activityCount: index + 3, commentary: true })),
+    ];
+    let settledHistory: string[] = [];
+    let finalRows: ThreadFeedEntry[] = [];
+
+    for (const [index, stage] of stages.entries()) {
+      const thread = makeThread({
+        id: ThreadId.make(`segment-monotonic-${index}`),
+        projectId: ProjectId.make("project-1"),
+        title: "Monotonic segments",
+        latestTurn: runningTurn,
+        messages: stage.commentary ? [commentary] : [],
+        activities: steps.slice(0, stage.activityCount),
+      });
+      finalRows = deriveThreadFeedPresentation(
+        buildThreadFeed(thread),
+        runningTurn,
+        new Set([turnId]),
+        new Set(),
+        at(0),
+      );
+      const history = finalRows
+        .filter(
+          (row) =>
+            (row.type === "work-toggle" && !row.shimmer) ||
+            (row.type === "message" && row.message.role === "assistant"),
+        )
+        .map((row) =>
+          row.type === "work-toggle"
+            ? `${row.id}:${row.summary}`
+            : row.type === "message"
+              ? `${row.id}:${row.message.text}`
+              : row.id,
+        );
+      expect(history.slice(0, settledHistory.length)).toEqual(settledHistory);
+      settledHistory = history;
+      expect(
+        finalRows.filter(
+          (row) => (row.type === "work-toggle" && row.shimmer) || row.type === "thinking",
+        ),
+      ).toHaveLength(1);
+    }
+
+    expect(summaries(finalRows)).toEqual([
+      "Thought for 1.0s",
+      "Ran 2 commands",
+      "Thought for 1.0s",
+      "Ran command",
+      "Thinking",
+    ]);
+
+    const restoredThread = makeThread({
+      id: ThreadId.make("segment-monotonic-restored"),
+      projectId: ProjectId.make("project-1"),
+      title: "Restored monotonic segments",
+      latestTurn: settledTurn,
+      messages: [commentary],
+      activities: steps,
+    });
+    expect(
+      summaries(
+        deriveThreadFeedPresentation(
+          buildThreadFeed(restoredThread),
+          settledTurn,
+          new Set([turnId]),
+        ),
+      ),
+    ).toEqual(["Thought for 1.0s", "Ran 2 commands", "Thought for 1.0s", "Ran command", "Thought"]);
+  });
+
   it("expands a thought into its lifecycle pair", () => {
     const thread = makeThread({
       id: ThreadId.make("segment-expand"),
