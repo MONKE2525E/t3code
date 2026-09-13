@@ -2771,6 +2771,9 @@ export function makeOpenCodeAdapter(
               break;
             }
           }
+          if (activeTurnId) {
+            yield* completeOpenReasoningSegment(context, activeTurnId, event);
+          }
           yield* cancelIdleReconciliation(context);
           const terminalCancellation =
             activeTurnId !== undefined && cancellation?.turnId === activeTurnId

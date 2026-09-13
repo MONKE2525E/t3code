@@ -1912,8 +1912,6 @@ function designateLiveThinkingScope(
         ) {
           terminalReasoningIds.add(workEntry.toolCallId);
         }
-      } else if (activity.lifecycleStatus === "inProgress" && activity.turnId === unsettledTurnId) {
-        hasLiveToolActivity = true;
       }
     }
   }
@@ -1921,13 +1919,18 @@ function designateLiveThinkingScope(
     if (entry.type !== "activity-group") continue;
     for (const activity of entry.activities) {
       const workEntry = activity.workEntry;
-      if (!isReasoningSegmentEntry(workEntry)) continue;
-      if (activity.turnId !== unsettledTurnId) continue;
-      if (activity.lifecycleStatus !== "inProgress") continue;
+      if (activity.turnId !== unsettledTurnId || activity.lifecycleStatus !== "inProgress") {
+        continue;
+      }
+      if (!isReasoningSegmentEntry(workEntry)) {
+        hasLiveToolActivity = true;
+        continue;
+      }
       if (workEntry.toolCallId !== undefined && terminalReasoningIds.has(workEntry.toolCallId)) {
         continue;
       }
       designatedThinkingActivityId = activity.id;
+      hasLiveToolActivity = false;
     }
   }
   return { designatedThinkingActivityId, hasLiveToolActivity };
@@ -2101,17 +2104,7 @@ function appendToolGroupRows(
   const groupId = `work-group:${identity}`;
   const expanded = expandedWorkGroupIds.has(groupId);
   if (thinkingLive !== undefined) {
-    appendThinkingSegmentRows(
-      result,
-      sourceGroup,
-      activities,
-      groupId,
-      expanded,
-      unsettledTurnId,
-      isWorking,
-      activeTail,
-      thinkingLive,
-    );
+    appendThinkingSegmentRows(result, sourceGroup, activities, groupId, expanded, thinkingLive);
     return;
   }
   const latestActiveActivity = activities.findLast(
@@ -2221,9 +2214,6 @@ function appendThinkingSegmentRows(
   activities: ReadonlyArray<ThreadFeedActivity>,
   groupId: string,
   expanded: boolean,
-  unsettledTurnId: TurnId | null,
-  isWorking: boolean,
-  activeTail: boolean,
   thinkingLive: { designatedThinkingActivityId: string | null; hasLiveToolActivity: boolean },
 ): void {
   for (const activity of activities) {
@@ -2261,10 +2251,7 @@ function appendThinkingSegmentRows(
         {
           ...activity,
           groupedToolDetail: true,
-          live:
-            isWorking &&
-            activity.lifecycleStatus === "inProgress" &&
-            activity.turnId === unsettledTurnId,
+          live,
         },
       ],
     });

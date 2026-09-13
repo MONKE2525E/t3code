@@ -3547,6 +3547,26 @@ describe("reasoning segments", () => {
     ]);
   });
 
+  it("keeps an adjacent completed thought beside the live tool row", () => {
+    const rows = deriveMessagesTimelineRows(
+      liveInput(
+        [userMessage],
+        deriveWorkLogEntries([
+          thinkingActivity("thought-updated", "tool.updated", 1, "thought"),
+          thinkingActivity("thought-completed", "tool.completed", 5, "thought"),
+          toolActivity("tool-1", 9),
+        ]),
+      ),
+    );
+
+    expect(rows.filter((row) => row.kind === "work-live")).toMatchObject([
+      { entry: { toolCallId: "call-tool-1" } },
+    ]);
+    expect(rows.filter((row) => row.kind === "work")).toMatchObject([
+      { displayLabel: "Thought for 4.0s" },
+    ]);
+  });
+
   it("does not let completed reasoning claim the live tool row", () => {
     const rows = deriveMessagesTimelineRows(
       liveInput(

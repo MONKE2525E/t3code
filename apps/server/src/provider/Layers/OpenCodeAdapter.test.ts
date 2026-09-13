@@ -7542,6 +7542,78 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("finalizes an open thought on session error", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-reasoning-error");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "error-message";
+      const start = promiseWithResolvers<OpenCodeEvent>();
+      runtimeMock.state.subscribedEvents = [
+        start.promise,
+        {
+          type: "message.updated",
+          properties: { sessionID, info: { id: messageID, role: "assistant" } },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "reasoning-1",
+              sessionID,
+              messageID,
+              type: "reasoning",
+              text: "",
+              time: { start: 100 },
+            },
+          },
+        },
+        {
+          id: "evt-reasoning-error",
+          type: "session.error",
+          properties: {
+            sessionID,
+            error: { name: "UnknownError", data: { message: "failed" } },
+          },
+        },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil(
+          (event) => event.type === "item.completed" && event.payload.itemType === "reasoning",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Think quietly",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      start.resolve({
+        id: "evt-error-busy",
+        type: "session.status",
+        properties: { sessionID, status: { type: "busy" } },
+      });
+
+      const events = yield* Fiber.join(eventsFiber);
+      const reasoningCompleted = events.find(
+        (event) => event.type === "item.completed" && event.payload.itemType === "reasoning",
+      );
+      NodeAssert.equal(reasoningCompleted?.turnId, turn.turnId);
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("finalizes the open thought when the turn is interrupted", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
@@ -7549,9 +7621,15 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const sessionID = "http://127.0.0.1:9999/session";
       const messageID = "interrupt-message";
       const start = promiseWithResolvers<OpenCodeEvent>();
+      const reasoningOpened = yield* Deferred.make<void>();
       runtimeMock.state.subscribedEvents = [start.promise];
       const eventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter((event) => event.threadId === threadId),
+        Stream.tap((event) =>
+          event.type === "item.updated" && event.payload.itemType === "reasoning"
+            ? Deferred.succeed(reasoningOpened, undefined).pipe(Effect.ignore)
+            : Effect.void,
+        ),
         Stream.takeUntil((event) => event.type === "turn.aborted"),
         Stream.runCollect,
         Effect.forkChild,
@@ -7574,16 +7652,6 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         type: "session.status",
         properties: { sessionID, status: { type: "busy" } },
       });
-      const reasoningOpened = yield* adapter.streamEvents.pipe(
-        Stream.filter(
-          (event) =>
-            event.threadId === threadId &&
-            event.type === "item.updated" &&
-            event.payload.itemType === "reasoning",
-        ),
-        Stream.runHead,
-        Effect.forkChild,
-      );
       runtimeMock.state.subscribedEvents.push(
         {
           type: "message.updated",
@@ -7604,7 +7672,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           },
         },
       );
-      yield* Fiber.join(reasoningOpened);
+      yield* Deferred.await(reasoningOpened);
       yield* adapter.interruptTurn(threadId, turn.turnId);
 
       const events = yield* Fiber.join(eventsFiber);

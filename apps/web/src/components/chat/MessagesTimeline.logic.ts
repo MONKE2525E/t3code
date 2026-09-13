@@ -997,13 +997,17 @@ export function deriveMessagesTimelineRows(input: {
         })()
       : null;
   const activeWorkEntryIds = new Set(
-    activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
+    activeWorkRow !== null || latestToolFailed
+      ? activeToolEntries
+          .filter(
+            ({ entry }) =>
+              !isReasoningSegmentEntry(entry) || entry.toolLifecycleStatus === "inProgress",
+          )
+          .map((entry) => entry.id)
+      : [],
   );
-  // At most one thought is ever live: the latest still-open reasoning entry
-  // of the unsettled turn. Completed siblings disqualify stale in-progress
-  // updates delivered out of order. Groups render live only for the
-  // designated entry; the trailing live scan owns it when it already
-  // claimed the live slot, and everything else renders statically.
+  // Only the latest open reasoning entry in the unsettled turn may be live;
+  // terminal siblings suppress stale updates delivered out of order.
   const liveReasoningWorkEntryId = (() => {
     if (!input.isWorking || unsettledTurnId === null) return null;
     const terminalReasoningIds = new Set<string>();

@@ -3753,6 +3753,59 @@ describe("reasoning segments", () => {
       { summary: "Thinking", live: true, id: LIVE_ACTIVITY_ROW_ID },
     ]);
     expect(rows.some((row) => row.type === "thinking")).toBe(false);
+
+    const liveThought = rows.find(
+      (row): row is Extract<(typeof rows)[number], { type: "work-toggle" }> =>
+        row.type === "work-toggle" && row.live,
+    )!;
+    const expandedRows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set([liveThought.groupId]),
+      at(0),
+    );
+    expect(
+      expandedRows
+        .filter((row) => row.type === "activity-group")
+        .flatMap((row) => row.activities)
+        .filter((activity) => activity.live),
+    ).toMatchObject([{ live: true }]);
+  });
+
+  it("lets a later thought take the live slot from an earlier tool", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-after-live-tool"),
+      projectId: ProjectId.make("project-1"),
+      title: "Thought after tool",
+      latestTurn: runningTurn,
+      activities: [
+        {
+          ...toolActivity("tool-1", 1),
+          payload: {
+            itemType: "command_execution",
+            toolCallId: "call-tool-1",
+            status: "inProgress",
+            title: "Running command",
+            command: "git status",
+          },
+        },
+        thinkingActivity("thought-live", "tool.updated", 2, "thought-live"),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    expect(rows.filter((row) => row.type === "work-toggle" && row.shimmer)).toMatchObject([
+      { summary: "Thinking", live: true },
+    ]);
+    expect(rows.some((row) => row.type === "thinking")).toBe(false);
   });
 
   it("scopes terminal reasoning identity to the unsettled turn", () => {
