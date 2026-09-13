@@ -3366,6 +3366,7 @@ describe("reasoning segments", () => {
     kind: "tool.updated" | "tool.completed",
     second: number,
     toolCallId = id,
+    activityTurnId = turnId,
   ): OrchestrationThreadActivity =>
     ({
       id: EventId.make(id),
@@ -3378,7 +3379,7 @@ describe("reasoning segments", () => {
         status: kind === "tool.completed" ? "completed" : "inProgress",
         title: "Thinking",
       },
-      turnId,
+      turnId: activityTurnId,
       createdAt: time(second),
     }) as unknown as OrchestrationThreadActivity;
   const toolActivity = (id: string, second: number, command = "git status") =>
@@ -3544,6 +3545,42 @@ describe("reasoning segments", () => {
     expect(thoughts.map((row) => row.kind === "work" && row.displayLabel)).toEqual([
       "Thought for 4.0s",
     ]);
+  });
+
+  it("does not let completed reasoning claim the live tool row", () => {
+    const rows = deriveMessagesTimelineRows(
+      liveInput(
+        [userMessage],
+        deriveWorkLogEntries([
+          thinkingActivity("thought-updated", "tool.updated", 1, "thought"),
+          thinkingActivity("thought-completed", "tool.completed", 5, "thought"),
+        ]),
+      ),
+    );
+
+    expect(rows.filter((row) => row.kind === "work-live")).toHaveLength(0);
+    expect(rows.filter((row) => row.kind === "work")).toMatchObject([
+      { displayLabel: "Thought for 4.0s" },
+    ]);
+    expect(rows.filter((row) => row.kind === "thinking")).toHaveLength(1);
+  });
+
+  it("scopes terminal reasoning identity to the unsettled turn", () => {
+    const oldTurnId = TurnId.make("older-segment-turn");
+    const rows = deriveMessagesTimelineRows(
+      liveInput(
+        [userMessage],
+        deriveWorkLogEntries([
+          thinkingActivity("old-completed", "tool.completed", 1, "shared-id", oldTurnId),
+          thinkingActivity("current-open", "tool.updated", 2, "shared-id"),
+        ]),
+      ),
+    );
+
+    expect(rows.filter((row) => row.kind === "work-live")).toMatchObject([
+      { active: true, entry: { toolCallId: "shared-id", turnId } },
+    ]);
+    expect(rows.some((row) => row.kind === "thinking")).toBe(false);
   });
 
   it("lets only the latest open thought animate", () => {

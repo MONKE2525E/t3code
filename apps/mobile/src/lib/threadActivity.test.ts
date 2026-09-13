@@ -19,6 +19,7 @@ import {
   buildThreadFeed,
   deriveThreadFeedPresentation,
   isPendingUserInputOptionSelected,
+  LIVE_ACTIVITY_ROW_ID,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   workEntryRowLabel,
@@ -3460,6 +3461,7 @@ describe("reasoning segments", () => {
     kind: "tool.updated" | "tool.completed",
     second: number,
     toolCallId = id,
+    activityTurnId = turnId,
   ) =>
     makeActivity({
       id: EventId.make(id),
@@ -3467,7 +3469,7 @@ describe("reasoning segments", () => {
       summary: "Thinking",
       tone: "tool",
       createdAt: at(second),
-      turnId,
+      turnId: activityTurnId,
       payload: {
         itemType: "reasoning",
         toolCallId,
@@ -3716,6 +3718,67 @@ describe("reasoning segments", () => {
     expect(shimmering).toHaveLength(1);
     expect(shimmering[0]).toMatchObject({ summary: "Thinking" });
     expect(summaries(rows)).toEqual(["Thought", "Thinking"]);
+    expect(rows.some((row) => row.type === "thinking")).toBe(false);
+  });
+
+  it("keeps a commentary-separated live thought in the single live slot", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-commentary-live"),
+      projectId: ProjectId.make("project-1"),
+      title: "Commentary then live thought",
+      latestTurn: runningTurn,
+      messages: [
+        {
+          id: MessageId.make("commentary-after-thought"),
+          role: "assistant",
+          text: "Still working.",
+          turnId,
+          streaming: false,
+          createdAt: at(2),
+          updatedAt: at(2),
+        },
+      ],
+      activities: [thinkingActivity("thought-live", "tool.updated", 1, "thought-live")],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    expect(rows.filter((row) => row.type === "work-toggle" && row.shimmer)).toMatchObject([
+      { summary: "Thinking", live: true, id: LIVE_ACTIVITY_ROW_ID },
+    ]);
+    expect(rows.some((row) => row.type === "thinking")).toBe(false);
+  });
+
+  it("scopes terminal reasoning identity to the unsettled turn", () => {
+    const oldTurnId = TurnId.make("older-segment-turn");
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-turn-scoped-identity"),
+      projectId: ProjectId.make("project-1"),
+      title: "Turn-scoped reasoning",
+      latestTurn: runningTurn,
+      activities: [
+        thinkingActivity("old-completed", "tool.completed", 1, "shared-id", oldTurnId),
+        thinkingActivity("current-open", "tool.updated", 2, "shared-id"),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    expect(rows.filter((row) => row.type === "work-toggle" && row.shimmer)).toMatchObject([
+      { summary: "Thinking", live: true },
+    ]);
     expect(rows.some((row) => row.type === "thinking")).toBe(false);
   });
 

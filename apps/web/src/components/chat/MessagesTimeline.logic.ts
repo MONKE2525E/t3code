@@ -973,7 +973,13 @@ export function deriveMessagesTimelineRows(input: {
           !workEntryDisplayIndicatesToolFailure(latestVisibleToolEntry.entry))));
   const activeWorkPlacementEntryId = latestVisibleToolEntry?.id;
   const activeWorkRow =
-    activeWorkAnchor && latestVisibleToolEntry && !latestToolFailed
+    activeWorkAnchor &&
+    latestVisibleToolEntry &&
+    !latestToolFailed &&
+    !(
+      isReasoningSegmentEntry(latestVisibleToolEntry.entry) &&
+      latestVisibleToolEntry.entry.toolLifecycleStatus !== "inProgress"
+    )
       ? (() => {
           const groupId = workGroupId(activeWorkAnchor.id, activeWorkAnchor.entry);
           return {
@@ -1004,7 +1010,7 @@ export function deriveMessagesTimelineRows(input: {
     for (const timelineEntry of input.timelineEntries) {
       if (timelineEntry.kind !== "work") continue;
       const entry = timelineEntry.entry;
-      if (!isReasoningSegmentEntry(entry)) continue;
+      if (entry.turnId !== unsettledTurnId || !isReasoningSegmentEntry(entry)) continue;
       if (
         entry.toolLifecycleStatus !== undefined &&
         entry.toolLifecycleStatus !== "inProgress" &&

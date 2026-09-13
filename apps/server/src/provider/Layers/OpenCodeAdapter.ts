@@ -1678,7 +1678,10 @@ export function makeOpenCodeAdapter(
       }
       if (part.time?.end !== undefined && !part.completed) {
         part.completed = true;
-        if (context.openReasoningPart?.id === part.id) {
+        if (
+          context.openReasoningPart?.messageID === part.messageID &&
+          context.openReasoningPart.id === part.id
+        ) {
           context.openReasoningPart = undefined;
         }
         yield* emit({
@@ -2484,22 +2487,25 @@ export function makeOpenCodeAdapter(
         }
 
         case "message.removed": {
+          if (context.openReasoningPart?.messageID === event.properties.messageID) {
+            yield* completeOpenReasoningSegment(context, turnId, event);
+          }
           context.messageRoleById.delete(event.properties.messageID);
           context.textPartsByMessageId.delete(event.properties.messageID);
-          if (context.openReasoningPart?.messageID === event.properties.messageID) {
-            context.openReasoningPart = undefined;
-          }
           break;
         }
 
         case "message.part.removed": {
+          if (
+            context.openReasoningPart?.messageID === event.properties.messageID &&
+            context.openReasoningPart.id === event.properties.partID
+          ) {
+            yield* completeOpenReasoningSegment(context, turnId, event);
+          }
           const parts = context.textPartsByMessageId.get(event.properties.messageID);
           parts?.delete(event.properties.partID);
           if (parts?.size === 0) {
             context.textPartsByMessageId.delete(event.properties.messageID);
-          }
-          if (context.openReasoningPart?.id === event.properties.partID) {
-            context.openReasoningPart = undefined;
           }
           break;
         }
@@ -2524,6 +2530,9 @@ export function makeOpenCodeAdapter(
           const { nextText, deltaToEmit } = appendOpenCodeAssistantTextDelta(previousText, delta);
           if (deltaToEmit.length === 0) {
             break;
+          }
+          if (existingPart.type === "text") {
+            yield* completeOpenReasoningSegment(context, turnId, event);
           }
           existingPart.emittedText = nextText;
           existingPart.text = nextText;

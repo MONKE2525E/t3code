@@ -1905,6 +1905,7 @@ function designateLiveThinkingScope(
       const workEntry = activity.workEntry;
       if (isReasoningSegmentEntry(workEntry)) {
         if (
+          activity.turnId === unsettledTurnId &&
           workEntry.toolLifecycleStatus !== undefined &&
           workEntry.toolLifecycleStatus !== "inProgress" &&
           workEntry.toolCallId !== undefined
@@ -2231,7 +2232,7 @@ function appendThinkingSegmentRows(
     const live =
       activity.id === thinkingLive.designatedThinkingActivityId &&
       !thinkingLive.hasLiveToolActivity;
-    const shimmer = live && activeTail;
+    const shimmer = live;
     result.push({
       type: "work-toggle",
       // The shimmering row is the turn's live slot; it keeps that identity

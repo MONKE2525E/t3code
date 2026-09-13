@@ -7309,9 +7309,19 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
               sessionID,
               messageID,
               type: "text",
-              text: "Working on it",
+              text: "",
               time: { start: 150 },
             },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID,
+            messageID,
+            partID: "text-1",
+            field: "text",
+            delta: "Working on it",
           },
         },
         { type: "session.compacted", properties: { sessionID } },
@@ -7344,6 +7354,68 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(
         [delta.payload.streamKind, delta.payload.delta],
         ["assistant_text", "Working on it"],
+      );
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("finalizes open thoughts before part and message removal", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-reasoning-removal");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "removal-message";
+      const reasoningPart = (id: string, start: number) => ({
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          part: { id, sessionID, messageID, type: "reasoning", text: "", time: { start } },
+        },
+      });
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID,
+            info: { id: messageID, role: "assistant", time: { created: 1, completed: 2 } },
+          },
+        },
+        reasoningPart("reasoning-part-removed", 100),
+        {
+          type: "message.part.removed",
+          properties: { sessionID, messageID, partID: "reasoning-part-removed" },
+        },
+        reasoningPart("reasoning-message-removed", 200),
+        { type: "message.removed", properties: { sessionID, messageID } },
+        { type: "session.compacted", properties: { sessionID } },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "thread.state.changed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = yield* Fiber.join(eventsFiber);
+      NodeAssert.deepEqual(
+        events
+          .filter(
+            (event) =>
+              (event.type === "item.updated" || event.type === "item.completed") &&
+              event.payload.itemType === "reasoning",
+          )
+          .map((event) => [event.type, event.itemId]),
+        [
+          ["item.updated", "reasoning-part-removed"],
+          ["item.completed", "reasoning-part-removed"],
+          ["item.updated", "reasoning-message-removed"],
+          ["item.completed", "reasoning-message-removed"],
+        ],
       );
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped),
