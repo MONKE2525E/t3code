@@ -631,6 +631,14 @@ function makeOpenCodeEventQueue() {
   };
 }
 
+const isItemLifecycleForTest = (
+  event: ProviderRuntimeEvent,
+): event is Extract<
+  ProviderRuntimeEvent,
+  { type: "item.started" | "item.updated" | "item.completed" }
+> =>
+  event.type === "item.updated" || event.type === "item.completed" || event.type === "item.started";
+
 const permissionRequest = (id: string, sessionID: string): PermissionRequest => ({
   id,
   sessionID,
@@ -7224,16 +7232,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       });
 
       const events = yield* Fiber.join(eventsFiber);
-      const isItemLifecycle = (
-        event: ProviderRuntimeEvent,
-      ): event is Extract<
-        ProviderRuntimeEvent,
-        { type: "item.started" | "item.updated" | "item.completed" }
-      > =>
-        event.type === "item.updated" ||
-        event.type === "item.completed" ||
-        event.type === "item.started";
-      const lifecycle = events.filter(isItemLifecycle);
+      const lifecycle = events.filter(isItemLifecycleForTest);
+      // The running tool finalizes the open thought before its own
+      // lifecycle lands, so the tool supersedes the thought in event order.
       NodeAssert.deepEqual(
         lifecycle.map((event) => [
           event.type,
@@ -7243,9 +7244,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         ]),
         [
           ["item.updated", "reasoning-1", "reasoning", "inProgress"],
+          ["item.completed", "reasoning-1", "reasoning", "completed"],
           ["item.updated", "call-bash", "command_execution", "inProgress"],
           ["item.completed", "call-bash", "command_execution", "completed"],
-          ["item.completed", "reasoning-1", "reasoning", "completed"],
           ["item.updated", "reasoning-2", "reasoning", "inProgress"],
         ],
       );
@@ -7262,9 +7263,286 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         [],
       );
       const firstReasoning = lifecycle[0]!;
-      const reasoningCompletion = lifecycle[3]!;
+      const reasoningCompletion = lifecycle[1]!;
       NodeAssert.equal(firstReasoning.createdAt, "1970-01-01T00:00:00.100Z");
-      NodeAssert.equal(reasoningCompletion.createdAt, "1970-01-01T00:00:00.200Z");
+      // Eager finalization stamps the observation time: the thought ended
+      // when the tool started, before any native end arrived.
+      NodeAssert.equal(typeof reasoningCompletion.createdAt, "string");
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("finalizes the open thought when commentary starts flowing", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-reasoning-commentary");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "commentary-message";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID,
+            info: { id: messageID, role: "assistant", time: { created: 1, completed: 2 } },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "reasoning-1",
+              sessionID,
+              messageID,
+              type: "reasoning",
+              text: "",
+              time: { start: 100 },
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "text-1",
+              sessionID,
+              messageID,
+              type: "text",
+              text: "Working on it",
+              time: { start: 150 },
+            },
+          },
+        },
+        { type: "session.compacted", properties: { sessionID } },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "thread.state.changed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = yield* Fiber.join(eventsFiber);
+      const types = events
+        .map((event) => event.type)
+        .filter(
+          (type) =>
+            type === "item.updated" || type === "item.completed" || type === "content.delta",
+        );
+      // The thought closes before its own commentary delta lands.
+      NodeAssert.deepEqual(types, ["item.updated", "item.completed", "content.delta"]);
+      const completed = events.find((event) => event.type === "item.completed")!;
+      NodeAssert.equal(completed.itemId, "reasoning-1");
+      NodeAssert.equal(completed.payload.itemType, "reasoning");
+      const delta = events.find((event) => event.type === "content.delta")!;
+      NodeAssert.deepEqual(
+        [delta.payload.streamKind, delta.payload.delta],
+        ["assistant_text", "Working on it"],
+      );
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("closes the previous thought when a new reasoning part starts", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-reasoning-succession");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "succession-message";
+      const reasoningPart = (id: string, start: number) => ({
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          part: { id, sessionID, messageID, type: "reasoning", text: "", time: { start } },
+        },
+      });
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID,
+            info: { id: messageID, role: "assistant", time: { created: 1, completed: 2 } },
+          },
+        },
+        reasoningPart("reasoning-1", 100),
+        reasoningPart("reasoning-2", 200),
+        { type: "session.compacted", properties: { sessionID } },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "thread.state.changed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = yield* Fiber.join(eventsFiber);
+      const lifecycle = events.filter(isItemLifecycleForTest);
+      // reasoning-1 never reports a native end; sighting reasoning-2 ends it.
+      NodeAssert.deepEqual(
+        lifecycle.map((event) => [event.type, event.itemId]),
+        [
+          ["item.updated", "reasoning-1"],
+          ["item.completed", "reasoning-1"],
+          ["item.updated", "reasoning-2"],
+        ],
+      );
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("finalizes the open thought when the turn completes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-reasoning-turn-complete");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "turn-complete-message";
+      const start = promiseWithResolvers<OpenCodeEvent>();
+      runtimeMock.state.subscribedEvents = [
+        start.promise,
+        {
+          type: "message.updated",
+          properties: { sessionID, info: { id: messageID, role: "assistant" } },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "reasoning-1",
+              sessionID,
+              messageID,
+              type: "reasoning",
+              text: "",
+              time: { start: 100 },
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: { sessionID, status: { type: "idle" } },
+        },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Think quietly",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      start.resolve({
+        id: "evt-turn-complete-busy",
+        type: "session.status",
+        properties: { sessionID, status: { type: "busy" } },
+      });
+
+      const events = yield* Fiber.join(eventsFiber);
+      const reasoningCompletedIndex = events.findIndex(
+        (event) => event.type === "item.completed" && event.payload.itemType === "reasoning",
+      );
+      const turnCompletedIndex = events.findIndex((event) => event.type === "turn.completed");
+      NodeAssert.ok(reasoningCompletedIndex !== -1);
+      NodeAssert.ok(turnCompletedIndex !== -1);
+      NodeAssert.ok(reasoningCompletedIndex < turnCompletedIndex);
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("finalizes the open thought when the turn is interrupted", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-reasoning-interrupt");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "interrupt-message";
+      const start = promiseWithResolvers<OpenCodeEvent>();
+      runtimeMock.state.subscribedEvents = [start.promise];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.aborted"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Think quietly",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      start.resolve({
+        id: "evt-interrupt-busy",
+        type: "session.status",
+        properties: { sessionID, status: { type: "busy" } },
+      });
+      const reasoningOpened = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            event.type === "item.updated" &&
+            event.payload.itemType === "reasoning",
+        ),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      runtimeMock.state.subscribedEvents.push(
+        {
+          type: "message.updated",
+          properties: { sessionID, info: { id: messageID, role: "assistant" } },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "reasoning-1",
+              sessionID,
+              messageID,
+              type: "reasoning",
+              text: "",
+              time: { start: 100 },
+            },
+          },
+        },
+      );
+      yield* Fiber.join(reasoningOpened);
+      yield* adapter.interruptTurn(threadId, turn.turnId);
+
+      const events = yield* Fiber.join(eventsFiber);
+      const reasoningCompletedIndex = events.findIndex(
+        (event) => event.type === "item.completed" && event.payload.itemType === "reasoning",
+      );
+      const turnAbortedIndex = events.findIndex((event) => event.type === "turn.aborted");
+      NodeAssert.ok(reasoningCompletedIndex !== -1);
+      NodeAssert.ok(turnAbortedIndex !== -1);
+      NodeAssert.ok(reasoningCompletedIndex < turnAbortedIndex);
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped),
   );

@@ -78,6 +78,12 @@ export interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
+  /**
+   * Reasoning segment start, preserved when lifecycle updates merge into
+   * their completion. Lets the timeline bound "Thought for Xs" even when
+   * tool activity interleaves between the segment's start and end.
+   */
+  segmentStartedAt?: string;
   /** Originating orchestration activity kind (e.g. `user-input.requested`) for row chrome. */
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
   /** Grouping key for subagent lifecycle rows (one row per agent). */
@@ -718,11 +724,6 @@ function toolLifecycleCollapseMapKey(entry: DerivedWorkLogEntry): string | undef
   ) {
     return undefined;
   }
-  // Reasoning updates pair with their completion in the timeline for
-  // durations; merging them here would erase the segment start.
-  if (isReasoningSegmentEntry(entry)) {
-    return undefined;
-  }
   return entry.toolCallId ? `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}` : undefined;
 }
 
@@ -825,9 +826,6 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (isReasoningSegmentEntry(previous) || isReasoningSegmentEntry(next)) {
-    return false;
-  }
   if (
     previous.sourceActivityKind !== "tool.updated" &&
     previous.sourceActivityKind !== "tool.completed"
@@ -877,6 +875,15 @@ function mergeDerivedWorkLogEntries(
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  // A reasoning completion never carries its segment's start, so keep the
+  // earliest observed time across the merge. Interleaved tool activity can't
+  // break the pairing: collapse keys on identity, not adjacency.
+  const segmentStartedAt =
+    next.segmentStartedAt ??
+    previous.segmentStartedAt ??
+    (isReasoningSegmentEntry(previous) && isReasoningSegmentEntry(next)
+      ? previous.createdAt
+      : undefined);
   return {
     ...previous,
     ...next,
@@ -895,6 +902,7 @@ function mergeDerivedWorkLogEntries(
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(segmentStartedAt ? { segmentStartedAt } : {}),
   };
 }
 
@@ -922,10 +930,6 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
     entry.sourceActivityKind !== "tool.updated" &&
     entry.sourceActivityKind !== "tool.completed"
   ) {
-    return undefined;
-  }
-  // See toolLifecycleCollapseMapKey: reasoning pairs must reach the timeline.
-  if (isReasoningSegmentEntry(entry)) {
     return undefined;
   }
   if (entry.toolCallId) {

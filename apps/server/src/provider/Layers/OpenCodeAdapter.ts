@@ -351,6 +351,14 @@ interface OpenCodeSessionContext {
   // OpenCode permits edits to completed parts. Keep text for snapshot comparison
   // until native removal or session teardown, but do not retain other part payloads.
   readonly textPartsByMessageId: Map<string, Map<string, OpenCodeTextPartState>>;
+  /**
+   * The single currently open thought. A session thinks one thought at a
+   * time: sighting a new reasoning part, acting, commenting, or settling the
+   * turn closes whatever is open, so historical segments can never linger as
+   * live rows. Direct lookup only — never iterate retained parts here (see
+   * the history-visits guard in OpenCodeAdapter.test.ts).
+   */
+  openReasoningPart: { messageID: string; id: string } | undefined;
   turnTokenUsage: OpenCodeTurnTokenUsageAccumulator | undefined;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
@@ -1151,6 +1159,7 @@ export function makeOpenCodeAdapter(
         yield* Fiber.interrupt(pendingIdleReconciliation.fiber);
       }
       yield* schedulePendingRequestRecovery(context);
+      yield* completeOpenReasoningSegment(context, turnId, raw);
       yield* emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
@@ -1516,6 +1525,7 @@ export function makeOpenCodeAdapter(
         );
       }
       yield* clearPendingOpenCodeRequests(context, { type: "session.abort" });
+      yield* completeOpenReasoningSegment(context, turnId, raw);
       yield* emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
@@ -1593,6 +1603,45 @@ export function makeOpenCodeAdapter(
       yield* Scope.close(context.sessionScope, Exit.void);
     });
 
+    /**
+     * Close the open thought, if any. A thought ends as soon as the model
+     * acts on it: a tool call starts, commentary flows, a new thought
+     * begins, or the turn settles. The end is stamped with the native time
+     * when the provider reported one, otherwise with the observation time —
+     * never left dangling as a perpetual live row.
+     */
+    const completeOpenReasoningSegment = Effect.fn("completeOpenReasoningSegment")(function* (
+      context: OpenCodeSessionContext,
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      const open = context.openReasoningPart;
+      if (!open) {
+        return;
+      }
+      context.openReasoningPart = undefined;
+      const state = context.textPartsByMessageId.get(open.messageID)?.get(open.id);
+      if (!state || state.type !== "reasoning" || !state.reasoningStarted || state.completed) {
+        return;
+      }
+      state.completed = true;
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          itemId: state.id,
+          createdAt: state.time?.end !== undefined ? isoFromEpochMs(state.time.end) : undefined,
+          raw,
+        })),
+        type: "item.completed",
+        payload: {
+          itemType: "reasoning",
+          status: "completed",
+          title: "Thinking",
+        },
+      });
+    });
+
     /** Emit reasoning lifecycle (item.updated/item.completed) for a reasoning part. */
     const emitReasoningSegmentEvent = Effect.fn("emitReasoningSegmentEvent")(function* (
       context: OpenCodeSessionContext,
@@ -1609,6 +1658,8 @@ export function makeOpenCodeAdapter(
       // thought/tool/thought — including for models with empty reasoning text.
       if (!part.reasoningStarted) {
         part.reasoningStarted = true;
+        yield* completeOpenReasoningSegment(context, turnId, raw);
+        context.openReasoningPart = { messageID: part.messageID, id: part.id };
         yield* emit({
           ...(yield* buildEventBase({
             threadId: context.session.threadId,
@@ -1627,6 +1678,9 @@ export function makeOpenCodeAdapter(
       }
       if (part.time?.end !== undefined && !part.completed) {
         part.completed = true;
+        if (context.openReasoningPart?.id === part.id) {
+          context.openReasoningPart = undefined;
+        }
         yield* emit({
           ...(yield* buildEventBase({
             threadId: context.session.threadId,
@@ -1659,6 +1713,11 @@ export function makeOpenCodeAdapter(
       const { latestText, deltaToEmit } = mergeOpenCodeAssistantText(part.emittedText, part.text);
       part.emittedText = latestText;
       part.text = latestText;
+      // Flowing commentary ends any open thought before the words land, so a
+      // thought never stays live underneath the model's own answer.
+      if (part.type === "text" && latestText.length > 0) {
+        yield* completeOpenReasoningSegment(context, turnId, raw);
+      }
       if (deltaToEmit.length > 0) {
         yield* emit({
           ...(yield* buildEventBase({
@@ -2427,6 +2486,9 @@ export function makeOpenCodeAdapter(
         case "message.removed": {
           context.messageRoleById.delete(event.properties.messageID);
           context.textPartsByMessageId.delete(event.properties.messageID);
+          if (context.openReasoningPart?.messageID === event.properties.messageID) {
+            context.openReasoningPart = undefined;
+          }
           break;
         }
 
@@ -2435,6 +2497,9 @@ export function makeOpenCodeAdapter(
           parts?.delete(event.properties.partID);
           if (parts?.size === 0) {
             context.textPartsByMessageId.delete(event.properties.messageID);
+          }
+          if (context.openReasoningPart?.id === event.properties.partID) {
+            context.openReasoningPart = undefined;
           }
           break;
         }
@@ -2515,6 +2580,9 @@ export function makeOpenCodeAdapter(
           }
 
           if (part.type === "tool") {
+            // Acting ends thinking: close any open thought before the tool
+            // lifecycle lands so the tool supersedes it in event order.
+            yield* completeOpenReasoningSegment(context, turnId, event);
             const itemType = toToolLifecycleItemType(part.tool);
             const title =
               part.state.status === "running" || part.state.status === "completed"
@@ -3049,6 +3117,7 @@ export function makeOpenCodeAdapter(
           pendingQuestions: new Map(),
           textPartsByMessageId: new Map(),
           messageRoleById: new Map(),
+          openReasoningPart: undefined,
           turnTokenUsage: undefined,
           activeTurnId: undefined,
           activeAgent: undefined,

@@ -389,76 +389,37 @@ export function isReasoningSegmentEntry(
 }
 
 export interface ReasoningSegmentSpan {
-  /** Native segment identity when the provider reported one. */
-  readonly toolCallId: string | undefined;
-  /** Earliest observed segment time (native thinking start when known). */
+  /** Segment start: native thinking start when observed, else first sighting. */
   readonly startedAt: string | null;
   /** Segment end when a terminal lifecycle update arrived. */
   readonly endedAt: string | null;
   readonly completed: boolean;
 }
 
-/** Minimum shape for pairing lifecycle updates into reasoning segments. */
+/** Minimum shape for reasoning segment timing. */
 export interface ReasoningSegmentEntryLike {
   readonly createdAt: string;
   readonly toolCallId?: string | undefined;
   readonly toolLifecycleStatus?: string | undefined;
+  /** Preserved across lifecycle merges: the segment's first observed time. */
+  readonly segmentStartedAt?: string | undefined;
 }
 
 /**
- * Pairs a reasoning group's entries into per-segment spans by provider
- * identity, preserving order. Entries without an identity stand alone so a
- * missing id can never fuse two segments' timing.
+ * Bounds one reasoning entry's segment. Lifecycle pairs merge before they
+ * reach the timeline, so a terminal entry carries both ends; a dangling
+ * in-progress entry is an open thought with no known end.
  */
-export function groupReasoningSegmentEntries<T extends ReasoningSegmentEntryLike>(
-  entries: ReadonlyArray<T>,
-): Array<{ readonly entries: T[]; readonly span: ReasoningSegmentSpan }> {
-  const grouped: T[][] = [];
-  const indexByToolCallId = new Map<string, number>();
-  for (const entry of entries) {
-    const key = entry.toolCallId;
-    const index = key === undefined ? undefined : indexByToolCallId.get(key);
-    if (index === undefined) {
-      if (key !== undefined) indexByToolCallId.set(key, grouped.length);
-      grouped.push([entry]);
-      continue;
-    }
-    grouped[index]!.push(entry);
-  }
-  return grouped.map((groupEntries) => ({
-    entries: groupEntries,
-    span: spanForReasoningSegmentEntries(groupEntries),
-  }));
-}
-
-function spanForReasoningSegmentEntries<T extends ReasoningSegmentEntryLike>(
-  entries: ReadonlyArray<T>,
+export function reasoningSegmentSpanForEntry(
+  entry: ReasoningSegmentEntryLike,
 ): ReasoningSegmentSpan {
-  const terminal = entries.findLast(
-    (entry) =>
-      entry.toolLifecycleStatus !== undefined && entry.toolLifecycleStatus !== "inProgress",
-  );
+  const completed =
+    entry.toolLifecycleStatus !== undefined && entry.toolLifecycleStatus !== "inProgress";
   return {
-    toolCallId: entries[0]?.toolCallId,
-    startedAt: entries[0]?.createdAt ?? null,
-    endedAt: terminal?.createdAt ?? null,
-    completed: terminal !== undefined,
+    startedAt: entry.segmentStartedAt ?? entry.createdAt,
+    endedAt: completed ? entry.createdAt : null,
+    completed,
   };
-}
-
-/**
- * The entry a settled segment row renders: its completion when one arrived,
- * else its latest update. Segments are never empty.
- */
-export function representativeReasoningSegmentEntry<T extends ReasoningSegmentEntryLike>(
-  entries: ReadonlyArray<T>,
-): T {
-  return (
-    entries.findLast(
-      (entry) =>
-        entry.toolLifecycleStatus !== undefined && entry.toolLifecycleStatus !== "inProgress",
-    ) ?? entries.at(-1)!
-  );
 }
 
 /** Elapsed milliseconds between two ISO timestamps, or null when unparseable. */
@@ -474,15 +435,15 @@ export function reasoningSegmentElapsedMs(
 }
 
 /**
- * Compact settled label for a thinking segment. Durations below a second
- * stay a plain "Thinking": same-flush lifecycle pairs and untimed providers
- * carry no meaningful elapsed time, and sub-second thoughts need no duration.
+ * Compact settled label for a thinking segment. Only "Thinking" is ever
+ * live; history renders "Thought for Xs" with real timing, or a static
+ * "Thought" when no accurate duration exists.
  */
 export function formatThinkingSegmentLabel(
   span: Pick<ReasoningSegmentSpan, "startedAt" | "endedAt">,
 ): string {
   const elapsedMs = reasoningSegmentElapsedMs(span.startedAt, span.endedAt);
-  if (elapsedMs === null || elapsedMs < 1_000) return "Thinking";
+  if (elapsedMs === null || elapsedMs < 1_000) return "Thought";
   return `Thought for ${formatDuration(elapsedMs)}`;
 }
 

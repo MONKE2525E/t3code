@@ -7,9 +7,8 @@ import {
   normalizeCompactToolLabel,
   omitSupersededLifecycleMarkers,
   formatThinkingSegmentLabel,
-  groupReasoningSegmentEntries,
   isReasoningSegmentEntry,
-  representativeReasoningSegmentEntry,
+  reasoningSegmentSpanForEntry,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupAction,
@@ -994,6 +993,38 @@ export function deriveMessagesTimelineRows(input: {
   const activeWorkEntryIds = new Set(
     activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
   );
+  // At most one thought is ever live: the latest still-open reasoning entry
+  // of the unsettled turn. Completed siblings disqualify stale in-progress
+  // updates delivered out of order. Groups render live only for the
+  // designated entry; the trailing live scan owns it when it already
+  // claimed the live slot, and everything else renders statically.
+  const liveReasoningWorkEntryId = (() => {
+    if (!input.isWorking || unsettledTurnId === null) return null;
+    const terminalReasoningIds = new Set<string>();
+    for (const timelineEntry of input.timelineEntries) {
+      if (timelineEntry.kind !== "work") continue;
+      const entry = timelineEntry.entry;
+      if (!isReasoningSegmentEntry(entry)) continue;
+      if (
+        entry.toolLifecycleStatus !== undefined &&
+        entry.toolLifecycleStatus !== "inProgress" &&
+        entry.toolCallId !== undefined
+      ) {
+        terminalReasoningIds.add(entry.toolCallId);
+      }
+    }
+    let designated: string | null = null;
+    for (const timelineEntry of input.timelineEntries) {
+      if (timelineEntry.kind !== "work") continue;
+      const entry = timelineEntry.entry;
+      if (!isReasoningSegmentEntry(entry)) continue;
+      if (entry.turnId !== unsettledTurnId) continue;
+      if (entry.toolLifecycleStatus !== "inProgress") continue;
+      if (entry.toolCallId !== undefined && terminalReasoningIds.has(entry.toolCallId)) continue;
+      designated = entry.id;
+    }
+    return designated;
+  })();
   const appendWorkingRow = () => {
     const latestUserMessage = input.timelineEntries[lastUserMessageIndex(input.timelineEntries)];
     const visualResponseStartedAt =
@@ -1110,9 +1141,18 @@ export function deriveMessagesTimelineRows(input: {
         }
         // A thinking segment ends the tool group before it: thought and
         // action stay in separate compact rows instead of one giant pile.
+        // Distinct thoughts split too, so a superseded thought renders
+        // statically beside the live one instead of hiding inside it.
+        const previousEntry = groupedEntries[groupedEntries.length - 1]!;
+        const previousReasoning = isReasoningSegmentEntry(previousEntry);
+        const nextReasoning = isReasoningSegmentEntry(nextEntry.entry);
+        if (previousReasoning !== nextReasoning) {
+          break;
+        }
         if (
-          isReasoningSegmentEntry(groupedEntries[groupedEntries.length - 1]!) !==
-          isReasoningSegmentEntry(nextEntry.entry)
+          previousReasoning &&
+          nextReasoning &&
+          previousEntry.toolCallId !== nextEntry.entry.toolCallId
         ) {
           break;
         }
@@ -1127,7 +1167,12 @@ export function deriveMessagesTimelineRows(input: {
       );
       if (visibleGroupedEntries.length > 0) {
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
-        if (activeInProgressToolEntries.length > 0) {
+        // Reasoning groups take the designated-live branch below: entry-level
+        // in-progress status alone must never animate a superseded thought.
+        if (
+          activeInProgressToolEntries.length > 0 &&
+          !visibleGroupedEntries.every(isReasoningSegmentEntry)
+        ) {
           const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
           const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
@@ -1148,18 +1193,43 @@ export function deriveMessagesTimelineRows(input: {
             );
           }
         } else if (visibleGroupedEntries.every(isReasoningSegmentEntry)) {
-          // Settled thinking, one compact row per thought: "Thought for 4s".
-          // Live thoughts take the work-live branch above instead.
-          for (const segment of groupReasoningSegmentEntries(visibleGroupedEntries)) {
-            const representative = representativeReasoningSegmentEntry(segment.entries);
+          // One live thought per turn at most: the designated open segment
+          // animates while every other thought renders statically beside it.
+          const liveEntry =
+            activeWorkRow?.active === true
+              ? undefined
+              : visibleGroupedEntries.find((entry) => entry.id === liveReasoningWorkEntryId);
+          if (liveEntry !== undefined) {
+            const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
+            const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
             nextRows.push({
-              kind: "work",
-              id: `thinking-segment:${timelineEntry.id}:${segment.span.toolCallId ?? representative.id}`,
-              createdAt: segment.span.startedAt ?? representative.createdAt,
-              groupedEntries: [representative],
-              isExpandedToolGroup: false,
-              displayLabel: formatThinkingSegmentLabel(segment.span),
+              kind: "work-live",
+              id: `work-live:${workGroupIdentity(timelineEntry.id, timelineEntry.entry)}`,
+              createdAt: timelineEntry.createdAt,
+              entry: liveEntry,
+              groupedEntries: visibleGroupedEntries,
+              groupId,
+              expanded,
+              active: true,
             });
+            hasActivityRow = true;
+            if (expanded) {
+              nextRows.push(
+                expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),
+              );
+            }
+          } else {
+            for (const entry of visibleGroupedEntries) {
+              const span = reasoningSegmentSpanForEntry(entry);
+              nextRows.push({
+                kind: "work",
+                id: `thinking-segment:${timelineEntry.id}:${entry.id}`,
+                createdAt: span.startedAt ?? entry.createdAt,
+                groupedEntries: [entry],
+                isExpandedToolGroup: false,
+                displayLabel: formatThinkingSegmentLabel(span),
+              });
+            }
           }
         } else if (
           visibleGroupedEntries.length === 1 &&

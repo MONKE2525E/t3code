@@ -3557,7 +3557,8 @@ describe("reasoning segments", () => {
     expect(summaries(rows)).toEqual(["Thought for 4.0s"]);
     const details = rows.filter((row) => row.type === "activity-group");
     expect(details).toHaveLength(1);
-    expect(details[0]?.type === "activity-group" && details[0].activities).toHaveLength(2);
+    // The lifecycle pair merges into one entry carrying both ends.
+    expect(details[0]?.type === "activity-group" && details[0].activities).toHaveLength(1);
   });
 
   it("shimmers the live thought and hides the generic thinking fallback", () => {
@@ -3602,7 +3603,120 @@ describe("reasoning segments", () => {
       new Set([turnId]),
     );
 
-    expect(summaries(rows)).toEqual(["Ran command", "Thinking"]);
+    expect(summaries(rows)).toEqual(["Ran command", "Thought"]);
+  });
+
+  it("keeps completed thoughts static while the turn keeps working", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-working-history"),
+      projectId: ProjectId.make("project-1"),
+      title: "Working history",
+      latestTurn: runningTurn,
+      activities: [
+        thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"),
+        thinkingActivity("thought-1-completed", "tool.completed", 5, "thought-1"),
+        {
+          ...toolActivity("tool-1", 9),
+          payload: {
+            itemType: "command_execution",
+            toolCallId: "call-tool-1",
+            status: "inProgress",
+            title: "Ran command",
+            command: "git status",
+          },
+        },
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    // Exactly one shimmering row (the running tool); the finished thought is
+    // history even though the turn is still working.
+    const shimmering = rows.filter((row) => row.type === "work-toggle" && row.shimmer);
+    expect(shimmering).toHaveLength(1);
+    expect(summaries(rows)).toEqual(["Thought for 4.0s", "Ran command"]);
+  });
+
+  it("pins an earlier thought static when commentary splits the groups", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-split-groups"),
+      projectId: ProjectId.make("project-1"),
+      title: "Split groups",
+      latestTurn: runningTurn,
+      messages: [
+        {
+          id: MessageId.make("commentary"),
+          role: "assistant",
+          text: "On it.",
+          turnId,
+          streaming: false,
+          createdAt: at(6),
+          updatedAt: at(6),
+        },
+      ],
+      activities: [
+        thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"),
+        thinkingActivity("thought-1-completed", "tool.completed", 5, "thought-1"),
+        {
+          ...toolActivity("tool-1", 9),
+          payload: {
+            itemType: "command_execution",
+            toolCallId: "call-tool-1",
+            status: "inProgress",
+            title: "Ran command",
+            command: "git status",
+          },
+        },
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    // The live tool lives in a later group than the thought; still exactly
+    // one shimmering row, and the thought is static history.
+    const shimmering = rows.filter((row) => row.type === "work-toggle" && row.shimmer);
+    expect(shimmering).toHaveLength(1);
+    expect(summaries(rows)).toEqual(["Thought for 4.0s", "Ran command"]);
+    expect(rows.some((row) => row.type === "message")).toBe(true);
+  });
+
+  it("lets only the latest open thought shimmer", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-two-open"),
+      projectId: ProjectId.make("project-1"),
+      title: "Two open",
+      latestTurn: runningTurn,
+      activities: [
+        thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"),
+        thinkingActivity("thought-2-updated", "tool.updated", 2, "thought-2"),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    const shimmering = rows.filter((row) => row.type === "work-toggle" && row.shimmer);
+    expect(shimmering).toHaveLength(1);
+    expect(shimmering[0]).toMatchObject({ summary: "Thinking" });
+    expect(summaries(rows)).toEqual(["Thought", "Thinking"]);
+    expect(rows.some((row) => row.type === "thinking")).toBe(false);
   });
 
   it("folds settled thoughts away with their turn", () => {

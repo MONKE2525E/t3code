@@ -2518,27 +2518,53 @@ describe("reasoning segment derivation", () => {
       },
     });
 
-  it("derives thinking tone and keeps the lifecycle pair uncollapsed", () => {
+  it("derives thinking tone and merges the lifecycle pair keeping its start", () => {
     const entries = deriveWorkLogEntries([
       reasoningActivity("reasoning-updated", "tool.updated", "2026-02-23T00:00:01.000Z"),
       reasoningActivity("reasoning-completed", "tool.completed", "2026-02-23T00:00:05.000Z"),
     ]);
 
-    expect(entries).toHaveLength(2);
+    expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       tone: "thinking",
       label: "Thinking",
       toolCallId: "reasoning-1",
-      toolLifecycleStatus: "inProgress",
-    });
-    expect(entries[1]).toMatchObject({
-      tone: "thinking",
       toolLifecycleStatus: "completed",
+      segmentStartedAt: "2026-02-23T00:00:01.000Z",
+      createdAt: "2026-02-23T00:00:05.000Z",
     });
     // No reasoning text may hitch a ride: labels and details stay structural.
-    for (const entry of entries) {
-      expect(entry.detail).toBeUndefined();
-    }
+    expect(entries[0]?.detail).toBeUndefined();
+  });
+
+  it("pairs reasoning timing across interleaved tool activity", () => {
+    const tool = (id: string, createdAt: string) =>
+      makeActivity({
+        id,
+        kind: "tool.completed",
+        summary: "Ran command",
+        turnId: "turn-reasoning",
+        createdAt,
+        payload: {
+          itemType: "command_execution",
+          toolCallId: `call-${id}`,
+          status: "completed",
+          title: "Ran command",
+          command: "git status",
+        },
+      });
+    const entries = deriveWorkLogEntries([
+      reasoningActivity("reasoning-updated", "tool.updated", "2026-02-23T00:00:01.000Z"),
+      tool("tool-1", "2026-02-23T00:00:03.000Z"),
+      reasoningActivity("reasoning-completed", "tool.completed", "2026-02-23T00:00:05.000Z"),
+    ]);
+
+    const thought = entries.find((entry) => entry.tone === "thinking");
+    expect(thought).toMatchObject({
+      toolLifecycleStatus: "completed",
+      segmentStartedAt: "2026-02-23T00:00:01.000Z",
+      createdAt: "2026-02-23T00:00:05.000Z",
+    });
   });
 
   it("does not hide reasoning segments as neutral tool rows", () => {
