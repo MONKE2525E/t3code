@@ -3930,6 +3930,31 @@ describe("reasoning segments", () => {
     expect(rows.some((row) => row.type === "thinking")).toBe(false);
   });
 
+  it("does not reactivate an older thought after a later thought completes", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-terminal-boundary"),
+      projectId: ProjectId.make("project-1"),
+      title: "Terminal reasoning boundary",
+      latestTurn: runningTurn,
+      activities: [
+        thinkingActivity("thought-a-open", "tool.updated", 1, "thought-a"),
+        thinkingActivity("thought-b-open", "tool.updated", 2, "thought-b"),
+        thinkingActivity("thought-b-done", "tool.completed", 3, "thought-b"),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    expect(rows.some((row) => row.type === "work-toggle" && row.shimmer)).toBe(false);
+    expect(rows.filter((row) => row.type === "thinking")).toHaveLength(1);
+  });
+
   it("folds settled thoughts away with their turn", () => {
     const thread = makeThread({
       id: ThreadId.make("segment-fold"),

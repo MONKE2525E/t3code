@@ -3686,6 +3686,22 @@ describe("reasoning segments", () => {
     expect(rows.some((row) => row.kind === "thinking")).toBe(false);
   });
 
+  it("does not reactivate an older thought after a later thought completes", () => {
+    const rows = deriveMessagesTimelineRows(
+      liveInput(
+        [userMessage],
+        deriveWorkLogEntries([
+          thinkingActivity("thought-a-open", "tool.updated", 1, "thought-a"),
+          thinkingActivity("thought-b-open", "tool.updated", 2, "thought-b"),
+          thinkingActivity("thought-b-done", "tool.completed", 3, "thought-b"),
+        ]),
+      ),
+    );
+
+    expect(rows.filter((row) => row.kind === "work-live")).toHaveLength(0);
+    expect(rows.filter((row) => row.kind === "thinking")).toHaveLength(1);
+  });
+
   it("lets only the latest open thought animate", () => {
     const rows = deriveMessagesTimelineRows(
       liveInput(

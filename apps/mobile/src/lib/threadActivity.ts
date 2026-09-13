@@ -1919,9 +1919,19 @@ function designateLiveThinkingScope(
     if (entry.type !== "activity-group") continue;
     for (const activity of entry.activities) {
       const workEntry = activity.workEntry;
-      if (activity.turnId !== unsettledTurnId || activity.lifecycleStatus !== "inProgress") {
+      if (activity.turnId !== unsettledTurnId) {
         continue;
       }
+      if (
+        isReasoningSegmentEntry(workEntry) &&
+        activity.lifecycleStatus !== undefined &&
+        activity.lifecycleStatus !== "inProgress"
+      ) {
+        designatedThinkingActivityId = null;
+        hasLiveToolActivity = false;
+        continue;
+      }
+      if (activity.lifecycleStatus !== "inProgress") continue;
       if (!isReasoningSegmentEntry(workEntry)) {
         hasLiveToolActivity = true;
         continue;

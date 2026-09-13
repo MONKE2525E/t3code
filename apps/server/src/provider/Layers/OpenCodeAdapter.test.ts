@@ -7268,7 +7268,22 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       // Eager finalization stamps the observation time: the thought ended
       // when the tool started, before any native end arrived.
       NodeAssert.equal(typeof reasoningCompletion.createdAt, "string");
+      const stoppedEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "session.exited"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
       yield* adapter.stopSession(threadId);
+      const stoppedEvents = Array.from(yield* Fiber.join(stoppedEventsFiber));
+      NodeAssert.deepEqual(
+        stoppedEvents.map((event) => event.type),
+        ["item.completed", "session.exited"],
+      );
+      NodeAssert.equal(
+        stoppedEvents[0]?.type === "item.completed" && stoppedEvents[0].itemId,
+        "reasoning-2",
+      );
     }).pipe(Effect.scoped),
   );
 
@@ -7862,7 +7877,23 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         const endStream = promiseWithResolvers<unknown>();
         const request = permissionRequest("per_disconnect", "http://127.0.0.1:9999/session");
         runtimeMock.state.pendingPermissions = [request];
-        runtimeMock.state.subscribedEvents = [endStream.promise];
+        runtimeMock.state.subscribedEvents = [
+          {
+            type: "message.part.updated",
+            properties: {
+              sessionID: request.sessionID,
+              part: {
+                id: "reasoning-before-disconnect",
+                sessionID: request.sessionID,
+                messageID: "message-before-disconnect",
+                type: "reasoning",
+                text: "",
+                time: { start: 100 },
+              },
+            },
+          },
+          endStream.promise,
+        ];
         const openedFiber = yield* adapter.streamEvents.pipe(
           Stream.filter((event) => event.threadId === threadId && event.type === "request.opened"),
           Stream.runHead,
@@ -7898,6 +7929,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           properties: { sessionID: request.sessionID, status: { type: "busy" } },
         });
         const exited = yield* Fiber.join(exitedFiber);
+        const exitedTypes = Array.from(exited, (event) => event.type);
+        NodeAssert.ok(exitedTypes.indexOf("item.completed") < exitedTypes.indexOf("runtime.error"));
         NodeAssert.equal(
           exited.some((event) => event.type === "request.resolved"),
           false,

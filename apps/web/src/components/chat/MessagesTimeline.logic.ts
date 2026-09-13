@@ -1036,6 +1036,10 @@ export function deriveMessagesTimelineRows(input: {
       const entry = timelineEntry.entry;
       if (!isReasoningSegmentEntry(entry)) continue;
       if (entry.turnId !== unsettledTurnId) continue;
+      if (entry.toolLifecycleStatus !== undefined && entry.toolLifecycleStatus !== "inProgress") {
+        designated = null;
+        continue;
+      }
       if (entry.toolLifecycleStatus !== "inProgress") continue;
       if (entry.toolCallId !== undefined && terminalReasoningIds.has(entry.toolCallId)) continue;
       designated = entry.id;

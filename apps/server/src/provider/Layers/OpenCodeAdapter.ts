@@ -1069,7 +1069,7 @@ export function makeOpenCodeAdapter(
         // the remaining cleanups.
         yield* Effect.forEach(
           contexts,
-          (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+          (context) => Effect.ignoreCause(finalizeAndStopOpenCodeContext(context)),
           { concurrency: "unbounded", discard: true },
         );
         // Close the logger AFTER session teardown so any final lifecycle
@@ -1573,6 +1573,7 @@ export function makeOpenCodeAdapter(
       // run this inside a fiber forked via `Effect.forkIn(context.sessionScope)`;
       // closing that scope triggers the fiber-interrupt finalizer, so any
       // subsequent yield point would unwind and silently drop these emits.
+      yield* completeOpenReasoningSegment(context, turnId, undefined);
       yield* emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
@@ -1640,6 +1641,13 @@ export function makeOpenCodeAdapter(
           title: "Thinking",
         },
       });
+    });
+
+    const finalizeAndStopOpenCodeContext = Effect.fn("finalizeAndStopOpenCodeContext")(function* (
+      context: OpenCodeSessionContext,
+    ) {
+      yield* completeOpenReasoningSegment(context, context.activeTurnId, undefined);
+      return yield* stopOpenCodeContext(context);
     });
 
     /** Emit reasoning lifecycle (item.updated/item.completed) for a reasoning part. */
@@ -2951,7 +2959,7 @@ export function makeOpenCodeAdapter(
           if (existing.session.status === "connecting" && !(yield* Ref.get(existing.stopped))) {
             return (yield* awaitOpenCodeContextReady(existing)).session;
           }
-          yield* stopOpenCodeContext(existing);
+          yield* finalizeAndStopOpenCodeContext(existing);
           deleteContextIfCurrent(existing);
         }
 
@@ -3888,7 +3896,7 @@ export function makeOpenCodeAdapter(
             threadId,
           });
         }
-        const stopped = yield* stopOpenCodeContext(context);
+        const stopped = yield* finalizeAndStopOpenCodeContext(context);
         deleteContextIfCurrent(context);
         if (!stopped) {
           return;
@@ -4047,7 +4055,7 @@ export function makeOpenCodeAdapter(
         // interrupt the sibling fibers. Same pattern as the layer finalizer.
         yield* Effect.forEach(
           contexts,
-          (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+          (context) => Effect.ignoreCause(finalizeAndStopOpenCodeContext(context)),
           { concurrency: "unbounded", discard: true },
         );
       });
