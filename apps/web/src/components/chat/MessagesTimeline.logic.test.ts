@@ -10,6 +10,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationThread,
+  type OrchestrationThreadActivity,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import {
@@ -39,6 +40,7 @@ import {
   createMessageAttachmentPreviewProjector,
   deriveTimelineEntries,
   deriveTimelineEntriesWithState,
+  deriveWorkLogEntries,
   type WorkLogEntry,
   type TimelineEntriesProjection,
 } from "../../session-logic";
@@ -3353,5 +3355,196 @@ describe("computeStableMessagesTimelineRows", () => {
 
     expect(reordered).not.toBe(initial);
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
+  });
+});
+
+describe("reasoning segments", () => {
+  const turnId = TurnId.make("segment-turn");
+  const time = (second: number) => new Date(Date.UTC(2026, 8, 8, 0, 0, second)).toISOString();
+  const thinking = (
+    id: string,
+    kind: "updated" | "completed",
+    second: number,
+    toolCallId = id,
+  ): WorkLogEntry => ({
+    id,
+    createdAt: time(second),
+    turnId,
+    label: "Thinking",
+    tone: "thinking",
+    toolCallId,
+    toolLifecycleStatus: kind === "updated" ? "inProgress" : "completed",
+    sourceActivityKind: kind === "updated" ? "tool.updated" : "tool.completed",
+  });
+  const tool = (id: string, second: number): WorkLogEntry => ({
+    id,
+    createdAt: time(second),
+    turnId,
+    tone: "tool",
+    label: "Ran command",
+    command: "git status",
+    toolCallId: `call-${id}`,
+    toolLifecycleStatus: "completed",
+    sourceActivityKind: "tool.completed",
+  });
+  const settledInput = (work: WorkLogEntry[], expanded = true) => ({
+    timelineEntries: deriveTimelineEntries([], [], work),
+    latestTurn: { turnId, state: "completed" as const, startedAt: time(0), completedAt: time(30) },
+    isWorking: false,
+    activeTurnStartedAt: null,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+    ...(expanded ? { expandedTurnIds: new Set([turnId]) } : {}),
+  });
+
+  it("splits tool groups at thinking boundaries instead of one giant pile", () => {
+    const rows = deriveMessagesTimelineRows(
+      settledInput([
+        thinking("thought-1-updated", "updated", 0, "thought-1"),
+        thinking("thought-1-completed", "completed", 4, "thought-1"),
+        tool("tool-1", 5),
+        tool("tool-2", 6),
+        tool("tool-3", 7),
+        thinking("thought-2-updated", "updated", 8, "thought-2"),
+        thinking("thought-2-completed", "completed", 15, "thought-2"),
+        tool("tool-4", 16),
+        tool("tool-5", 17),
+      ]),
+    );
+
+    expect(rows.map((row) => row.kind)).toEqual([
+      "turn-fold",
+      "work",
+      "work-toggle",
+      "work",
+      "work-toggle",
+    ]);
+    expect(
+      rows
+        .filter((row) => row.kind === "work" || row.kind === "work-toggle")
+        .map((row) => (row.kind === "work" ? row.displayLabel : row.summary)),
+    ).toEqual(["Thought for 4.0s", "Ran 3 commands", "Thought for 7.0s", "Ran 2 commands"]);
+  });
+
+  it("keeps twenty-plus tool calls in small groups when thoughts intervene", () => {
+    const work: WorkLogEntry[] = [];
+    for (let segment = 0; segment < 4; segment += 1) {
+      const base = segment * 10;
+      work.push(
+        thinking(`thought-${segment}-updated`, "updated", base, `thought-${segment}`),
+        thinking(`thought-${segment}-completed`, "completed", base + 2, `thought-${segment}`),
+      );
+      for (let call = 0; call < 6; call += 1) {
+        work.push(tool(`tool-${segment}-${call}`, base + 3 + call));
+      }
+    }
+    const rows = deriveMessagesTimelineRows(settledInput(work));
+    const toggles = rows.filter((row) => row.kind === "work-toggle");
+    const thoughts = rows.filter((row) => row.kind === "work");
+
+    expect(rows.filter((row) => row.kind !== "turn-fold")).toHaveLength(8);
+    expect(thoughts).toHaveLength(4);
+    expect(toggles).toHaveLength(4);
+    for (const toggle of toggles) {
+      expect(toggle.kind === "work-toggle" && toggle.hiddenCount).toBe(6);
+    }
+    for (const thought of thoughts) {
+      expect(thought.kind === "work" && thought.displayLabel).toBe("Thought for 2.0s");
+    }
+  });
+
+  it("shows the live thought while reasoning runs and hides the generic fallback", () => {
+    const userMessage: ChatMessage = {
+      id: MessageId.make("segment-user"),
+      role: "user",
+      text: "Inspect",
+      turnId: null,
+      createdAt: time(0),
+      updatedAt: time(0),
+      streaming: false,
+    };
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntries(
+        [userMessage],
+        [],
+        [tool("tool-1", 6), thinking("thought-live", "updated", 7, "thought-live")],
+      ),
+      latestTurn: { turnId, state: "running", startedAt: time(0), completedAt: null },
+      runningTurnId: turnId,
+      isWorking: true,
+      activeTurnStartedAt: time(0),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    const live = rows.find((row) => row.kind === "work-live");
+    expect(live).toMatchObject({
+      active: true,
+      entry: { id: "thought-live", toolLifecycleStatus: "inProgress" },
+    });
+    // Segment-scoped timing: the live thought counts from the native
+    // reasoning start, not the turn start.
+    expect(live?.kind === "work-live" && live.entry.createdAt).toBe(time(7));
+    expect(live?.kind === "work-live" && liveWorkEntryLabel(live.entry, undefined, true)).toBe(
+      "Thinking",
+    );
+    expect(rows.some((row) => row.kind === "thinking")).toBe(false);
+  });
+
+  it("renders an interrupted thought without inventing a duration", () => {
+    const rows = deriveMessagesTimelineRows(
+      settledInput([tool("tool-1", 5), thinking("thought-live", "updated", 6, "thought-live")]),
+    ).filter((row) => row.kind === "work");
+
+    expect(rows.map((row) => row.kind)).toEqual(["work", "work"]);
+    expect(rows[1]).toMatchObject({ kind: "work", displayLabel: "Thinking" });
+  });
+
+  it("folds settled thoughts away with their turn", () => {
+    const rows = deriveMessagesTimelineRows(
+      settledInput(
+        [
+          thinking("thought-1-updated", "updated", 0, "thought-1"),
+          thinking("thought-1-completed", "completed", 4, "thought-1"),
+          tool("tool-1", 5),
+        ],
+        false,
+      ),
+    );
+
+    expect(rows.map((row) => row.kind)).toEqual(["turn-fold"]);
+  });
+
+  it("projects canonical reasoning activities into thought rows without text", () => {
+    const activity = (
+      id: string,
+      kind: "tool.updated" | "tool.completed",
+      second: number,
+    ): OrchestrationThreadActivity =>
+      ({
+        id: EventId.make(id),
+        tone: "tool",
+        kind,
+        summary: "Thinking",
+        payload: {
+          itemType: "reasoning",
+          toolCallId: "reasoning-e2e",
+          status: kind === "tool.completed" ? "completed" : "inProgress",
+          title: "Thinking",
+        },
+        turnId,
+        createdAt: time(second),
+      }) as unknown as OrchestrationThreadActivity;
+    const entries = deriveWorkLogEntries([
+      activity("reasoning-e2e-updated", "tool.updated", 0),
+      activity("reasoning-e2e-completed", "tool.completed", 4),
+    ]);
+    const rows = deriveMessagesTimelineRows(settledInput(entries));
+
+    expect(
+      rows
+        .filter((row) => row.kind === "work")
+        .map((row) => (row.kind === "work" ? row.displayLabel : null)),
+    ).toEqual(["Thought for 4.0s"]);
   });
 });

@@ -5,11 +5,17 @@ import { ThreadId } from "@t3tools/contracts";
 import {
   commandDetailRepeatsCommand,
   extractCommandOutputText,
+  formatThinkingSegmentLabel,
+  groupReasoningSegmentEntries,
+  isReasoningSegmentEntry,
+  reasoningSegmentElapsedMs,
+  representativeReasoningSegmentEntry,
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupAction,
   toolGroupSummaryKind,
+  type ReasoningSegmentEntryLike,
   type WorkLogPresentationEntry,
   workEntryViewedImagePath,
   workEntryIndicatesToolFailure,
@@ -708,5 +714,122 @@ describe("device group summaries", () => {
         },
       ]),
     ).toBe("Used 1 tool");
+  });
+});
+
+describe("reasoning segments", () => {
+  const thinking = (
+    overrides: Partial<WorkLogPresentationEntry> &
+      Partial<ReasoningSegmentEntryLike> & { label: string },
+  ): WorkLogPresentationEntry & ReasoningSegmentEntryLike => ({
+    tone: "thinking",
+    sourceActivityKind: "tool.completed",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  });
+
+  it("recognizes thinking tool lifecycle rows but not task progress rows", () => {
+    expect(isReasoningSegmentEntry(thinking({ label: "Thinking" }))).toBe(true);
+    expect(
+      isReasoningSegmentEntry(thinking({ label: "Thinking", sourceActivityKind: "tool.updated" })),
+    ).toBe(true);
+    // Subagent progress shares the thinking tone but is a different narrative.
+    expect(
+      isReasoningSegmentEntry(
+        thinking({ label: "Reasoning update", sourceActivityKind: "task.progress" }),
+      ),
+    ).toBe(false);
+    expect(isReasoningSegmentEntry({ tone: "tool", sourceActivityKind: "tool.completed" })).toBe(
+      false,
+    );
+  });
+
+  it("pairs in-progress and completed updates by provider identity", () => {
+    const segments = groupReasoningSegmentEntries([
+      thinking({
+        label: "Thinking",
+        sourceActivityKind: "tool.updated",
+        toolCallId: "reasoning-1",
+        toolLifecycleStatus: "inProgress",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+      thinking({
+        label: "Thinking",
+        toolCallId: "reasoning-1",
+        toolLifecycleStatus: "completed",
+        createdAt: "2026-01-01T00:00:04.000Z",
+      }),
+      thinking({
+        label: "Thinking",
+        sourceActivityKind: "tool.updated",
+        toolCallId: "reasoning-2",
+        toolLifecycleStatus: "inProgress",
+        createdAt: "2026-01-01T00:00:10.000Z",
+      }),
+    ]);
+    expect(segments).toHaveLength(2);
+    expect(segments[0]!.span).toEqual({
+      toolCallId: "reasoning-1",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      endedAt: "2026-01-01T00:00:04.000Z",
+      completed: true,
+    });
+    expect(segments[1]!.span).toEqual({
+      toolCallId: "reasoning-2",
+      startedAt: "2026-01-01T00:00:10.000Z",
+      endedAt: null,
+      completed: false,
+    });
+  });
+
+  it("keeps identity-less entries from fusing segments", () => {
+    const segments = groupReasoningSegmentEntries([
+      thinking({ label: "Thinking", createdAt: "2026-01-01T00:00:00.000Z" }),
+      thinking({ label: "Thinking", createdAt: "2026-01-01T00:00:01.000Z" }),
+    ]);
+    expect(segments).toHaveLength(2);
+  });
+
+  it("renders a segment from its completion when one arrived", () => {
+    const updated = thinking({
+      label: "Thinking",
+      sourceActivityKind: "tool.updated",
+      toolCallId: "reasoning-1",
+      toolLifecycleStatus: "inProgress",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const completed = thinking({
+      label: "Thinking",
+      toolCallId: "reasoning-1",
+      toolLifecycleStatus: "completed",
+      createdAt: "2026-01-01T00:00:04.000Z",
+    });
+    expect(representativeReasoningSegmentEntry([updated, completed])).toBe(completed);
+    expect(representativeReasoningSegmentEntry([updated])).toBe(updated);
+  });
+
+  it("measures elapsed time only between parseable timestamps", () => {
+    expect(reasoningSegmentElapsedMs("2026-01-01T00:00:00.000Z", "2026-01-01T00:00:04.000Z")).toBe(
+      4000,
+    );
+    expect(reasoningSegmentElapsedMs(null, "2026-01-01T00:00:04.000Z")).toBeNull();
+    expect(reasoningSegmentElapsedMs("not-a-date", "2026-01-01T00:00:04.000Z")).toBeNull();
+  });
+
+  it("labels completed segments with durations and hides sub-second noise", () => {
+    expect(
+      formatThinkingSegmentLabel({
+        startedAt: "2026-01-01T00:00:00.000Z",
+        endedAt: "2026-01-01T00:00:04.000Z",
+      }),
+    ).toBe("Thought for 4.0s");
+    // Same-flush lifecycle pairs and untimed providers carry no real elapsed time.
+    expect(
+      formatThinkingSegmentLabel({
+        startedAt: "2026-01-01T00:00:00.000Z",
+        endedAt: "2026-01-01T00:00:00.200Z",
+      }),
+    ).toBe("Thinking");
+    expect(formatThinkingSegmentLabel({ startedAt: null, endedAt: null })).toBe("Thinking");
   });
 });

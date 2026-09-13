@@ -10,6 +10,7 @@ import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-im
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 export function isWorktreeSetupActivity(kind: string): boolean {
   return kind === "setup-script.requested" || kind === "setup-script.started";
@@ -356,6 +357,133 @@ export function workLogEntryIsToolLike(entry: WorkLogPresentationEntry): boolean
   if (entry.command !== undefined && entry.command.trim().length > 0) return true;
   if (entry.requestKind !== undefined) return true;
   return entry.itemType !== undefined && isToolLifecycleItemType(entry.itemType);
+}
+
+/**
+ * Raw activity payloads carry the canonical item type. Reasoning lifecycle
+ * arrives through the tool activity kinds with itemType "reasoning".
+ */
+export function isReasoningItemPayload(payload: unknown): boolean {
+  return (
+    payload !== null &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    (payload as Record<string, unknown>).itemType === "reasoning"
+  );
+}
+
+/**
+ * Provider thinking surfaced as lifecycle only, never text. Adapters emit it
+ * through the tool activity kinds with a `reasoning` item type, and the
+ * clients derive the thinking tone from that. Subagent progress rows share
+ * the thinking tone but ride `task.progress`, so the kind check keeps them
+ * out of segment handling.
+ */
+export function isReasoningSegmentEntry(
+  entry: Pick<WorkLogPresentationEntry, "tone" | "sourceActivityKind">,
+): boolean {
+  return (
+    entry.tone === "thinking" &&
+    (entry.sourceActivityKind === "tool.updated" || entry.sourceActivityKind === "tool.completed")
+  );
+}
+
+export interface ReasoningSegmentSpan {
+  /** Native segment identity when the provider reported one. */
+  readonly toolCallId: string | undefined;
+  /** Earliest observed segment time (native thinking start when known). */
+  readonly startedAt: string | null;
+  /** Segment end when a terminal lifecycle update arrived. */
+  readonly endedAt: string | null;
+  readonly completed: boolean;
+}
+
+/** Minimum shape for pairing lifecycle updates into reasoning segments. */
+export interface ReasoningSegmentEntryLike {
+  readonly createdAt: string;
+  readonly toolCallId?: string | undefined;
+  readonly toolLifecycleStatus?: string | undefined;
+}
+
+/**
+ * Pairs a reasoning group's entries into per-segment spans by provider
+ * identity, preserving order. Entries without an identity stand alone so a
+ * missing id can never fuse two segments' timing.
+ */
+export function groupReasoningSegmentEntries<T extends ReasoningSegmentEntryLike>(
+  entries: ReadonlyArray<T>,
+): Array<{ readonly entries: T[]; readonly span: ReasoningSegmentSpan }> {
+  const grouped: T[][] = [];
+  const indexByToolCallId = new Map<string, number>();
+  for (const entry of entries) {
+    const key = entry.toolCallId;
+    const index = key === undefined ? undefined : indexByToolCallId.get(key);
+    if (index === undefined) {
+      if (key !== undefined) indexByToolCallId.set(key, grouped.length);
+      grouped.push([entry]);
+      continue;
+    }
+    grouped[index]!.push(entry);
+  }
+  return grouped.map((groupEntries) => ({
+    entries: groupEntries,
+    span: spanForReasoningSegmentEntries(groupEntries),
+  }));
+}
+
+function spanForReasoningSegmentEntries<T extends ReasoningSegmentEntryLike>(
+  entries: ReadonlyArray<T>,
+): ReasoningSegmentSpan {
+  const terminal = entries.findLast(
+    (entry) =>
+      entry.toolLifecycleStatus !== undefined && entry.toolLifecycleStatus !== "inProgress",
+  );
+  return {
+    toolCallId: entries[0]?.toolCallId,
+    startedAt: entries[0]?.createdAt ?? null,
+    endedAt: terminal?.createdAt ?? null,
+    completed: terminal !== undefined,
+  };
+}
+
+/**
+ * The entry a settled segment row renders: its completion when one arrived,
+ * else its latest update. Segments are never empty.
+ */
+export function representativeReasoningSegmentEntry<T extends ReasoningSegmentEntryLike>(
+  entries: ReadonlyArray<T>,
+): T {
+  return (
+    entries.findLast(
+      (entry) =>
+        entry.toolLifecycleStatus !== undefined && entry.toolLifecycleStatus !== "inProgress",
+    ) ?? entries.at(-1)!
+  );
+}
+
+/** Elapsed milliseconds between two ISO timestamps, or null when unparseable. */
+export function reasoningSegmentElapsedMs(
+  startedAt: string | null,
+  endedAt: string | null,
+): number | null {
+  if (!startedAt || !endedAt) return null;
+  const start = Date.parse(startedAt);
+  const end = Date.parse(endedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, end - start);
+}
+
+/**
+ * Compact settled label for a thinking segment. Durations below a second
+ * stay a plain "Thinking": same-flush lifecycle pairs and untimed providers
+ * carry no meaningful elapsed time, and sub-second thoughts need no duration.
+ */
+export function formatThinkingSegmentLabel(
+  span: Pick<ReasoningSegmentSpan, "startedAt" | "endedAt">,
+): string {
+  const elapsedMs = reasoningSegmentElapsedMs(span.startedAt, span.endedAt);
+  if (elapsedMs === null || elapsedMs < 1_000) return "Thinking";
+  return `Thought for ${formatDuration(elapsedMs)}`;
 }
 
 /** Maps item and task status to the status shown on a work-log row. */

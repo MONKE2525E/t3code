@@ -329,6 +329,7 @@ type OpenCodeTextPartState = Pick<OpenCodeTextPart, "id" | "messageID" | "type" 
   text: string | undefined;
   emittedText: string | undefined;
   completed: boolean;
+  reasoningStarted: boolean;
 };
 
 type OpenCodeStepUsage = Pick<Extract<Part, { readonly type: "step-finish" }>, "id" | "tokens">;
@@ -612,6 +613,7 @@ function retainOpenCodeTextPart(
     ...(part.time !== undefined ? { time: part.time } : {}),
     emittedText: previous?.emittedText,
     completed: previous?.completed ?? false,
+    reasoningStarted: previous?.reasoningStarted ?? false,
   };
   parts.set(part.id, state);
   context.textPartsByMessageId.set(part.messageID, parts);
@@ -1591,6 +1593,58 @@ export function makeOpenCodeAdapter(
       yield* Scope.close(context.sessionScope, Exit.void);
     });
 
+    /** Emit reasoning lifecycle (item.updated/item.completed) for a reasoning part. */
+    const emitReasoningSegmentEvent = Effect.fn("emitReasoningSegmentEvent")(function* (
+      context: OpenCodeSessionContext,
+      part: OpenCodeTextPartState,
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      if (part.type !== "reasoning") {
+        return;
+      }
+      // Lifecycle only, never text: reasoning content stays provider-private
+      // (see the reasoning_text drop in ProviderRuntimeIngestion). Native part
+      // identity and time metadata still give clients structural boundaries —
+      // thought/tool/thought — including for models with empty reasoning text.
+      if (!part.reasoningStarted) {
+        part.reasoningStarted = true;
+        yield* emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId,
+            itemId: part.id,
+            createdAt: part.time !== undefined ? isoFromEpochMs(part.time.start) : undefined,
+            raw,
+          })),
+          type: "item.updated",
+          payload: {
+            itemType: "reasoning",
+            status: "inProgress",
+            title: "Thinking",
+          },
+        });
+      }
+      if (part.time?.end !== undefined && !part.completed) {
+        part.completed = true;
+        yield* emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId,
+            itemId: part.id,
+            createdAt: isoFromEpochMs(part.time.end),
+            raw,
+          })),
+          type: "item.completed",
+          payload: {
+            itemType: "reasoning",
+            status: "completed",
+            title: "Thinking",
+          },
+        });
+      }
+    });
+
     /** Emit content.delta and item.completed events for an assistant text part. */
     const emitAssistantTextDelta = Effect.fn("emitAssistantTextDelta")(function* (
       context: OpenCodeSessionContext,
@@ -1598,6 +1652,7 @@ export function makeOpenCodeAdapter(
       turnId: TurnId | undefined,
       raw: unknown,
     ) {
+      yield* emitReasoningSegmentEvent(context, part, turnId, raw);
       if (part.text === undefined) {
         return;
       }

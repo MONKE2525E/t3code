@@ -6,6 +6,10 @@ import {
   liveActivityToolStatus,
   normalizeCompactToolLabel,
   omitSupersededLifecycleMarkers,
+  formatThinkingSegmentLabel,
+  groupReasoningSegmentEntries,
+  isReasoningSegmentEntry,
+  representativeReasoningSegmentEntry,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupAction,
@@ -1104,6 +1108,14 @@ export function deriveMessagesTimelineRows(input: {
         ) {
           break;
         }
+        // A thinking segment ends the tool group before it: thought and
+        // action stay in separate compact rows instead of one giant pile.
+        if (
+          isReasoningSegmentEntry(groupedEntries[groupedEntries.length - 1]!) !==
+          isReasoningSegmentEntry(nextEntry.entry)
+        ) {
+          break;
+        }
         groupedEntries.push(nextEntry.entry);
         cursor += 1;
       }
@@ -1134,6 +1146,20 @@ export function deriveMessagesTimelineRows(input: {
             nextRows.push(
               expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),
             );
+          }
+        } else if (visibleGroupedEntries.every(isReasoningSegmentEntry)) {
+          // Settled thinking, one compact row per thought: "Thought for 4s".
+          // Live thoughts take the work-live branch above instead.
+          for (const segment of groupReasoningSegmentEntries(visibleGroupedEntries)) {
+            const representative = representativeReasoningSegmentEntry(segment.entries);
+            nextRows.push({
+              kind: "work",
+              id: `thinking-segment:${timelineEntry.id}:${segment.span.toolCallId ?? representative.id}`,
+              createdAt: segment.span.startedAt ?? representative.createdAt,
+              groupedEntries: [representative],
+              isExpandedToolGroup: false,
+              displayLabel: formatThinkingSegmentLabel(segment.span),
+            });
           }
         } else if (
           visibleGroupedEntries.length === 1 &&

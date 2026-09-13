@@ -30,6 +30,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
@@ -7116,11 +7117,156 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(
         events
           .filter((event) => event.type === "item.completed")
-          .map((event) => event.payload.detail),
-        ["Hello world", "Fresh", "Second", "New"],
+          .map((event) => [event.payload.itemType, event.payload.detail]),
+        [
+          ["reasoning", undefined],
+          ["assistant_message", "Hello world"],
+          ["assistant_message", "Fresh"],
+          ["assistant_message", "Second"],
+          ["reasoning", undefined],
+          ["assistant_message", "New"],
+        ],
       );
+      // Reasoning parts project lifecycle boundaries without leaking text:
+      // one in-progress update per part sighting, then a completion. The
+      // post-removal replay emits a second pair for the fresh part state.
+      const reasoningUpdates = events
+        .filter((event) => event.type === "item.updated")
+        .filter((event) => event.payload.itemType === "reasoning");
+      NodeAssert.equal(reasoningUpdates.length, 2);
+      for (const update of reasoningUpdates) {
+        NodeAssert.equal(update.itemId, "reasoning-part");
+        NodeAssert.equal(update.payload.status, "inProgress");
+        NodeAssert.equal(update.payload.title, "Thinking");
+        NodeAssert.equal(update.payload.detail, undefined);
+        NodeAssert.equal(update.createdAt, "1970-01-01T00:00:00.001Z");
+      }
+      const reasoningCompletions = events
+        .filter((event) => event.type === "item.completed")
+        .filter((event) => event.payload.itemType === "reasoning");
+      NodeAssert.equal(reasoningCompletions.length, 2);
+      for (const completed of reasoningCompletions) {
+        NodeAssert.equal(completed.itemId, "reasoning-part");
+        NodeAssert.equal(completed.payload.status, "completed");
+        NodeAssert.equal(completed.payload.title, "Thinking");
+        NodeAssert.equal(completed.payload.detail, undefined);
+        NodeAssert.equal(completed.createdAt, "1970-01-01T00:00:00.002Z");
+      }
       yield* adapter.stopSession(threadId);
-    }),
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("emits reasoning segment boundaries for empty reasoning text around a tool", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-empty-reasoning");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "empty-reasoning-message";
+      const reasoningPart = (id: string, text: string, time: { start: number; end?: number }) => ({
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          part: { id, sessionID, messageID, type: "reasoning", text, time },
+        },
+      });
+      const toolPart = (status: "running" | "completed") => ({
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          part: {
+            id: "part-bash",
+            sessionID,
+            messageID,
+            type: "tool",
+            callID: "call-bash",
+            tool: "bash",
+            state: {
+              status,
+              input: { command: "pwd" },
+              ...(status === "running"
+                ? { title: "Working directory", time: { start: 150 } }
+                : {
+                    output: "/repo\n",
+                    title: "Working directory",
+                    metadata: {},
+                    time: { start: 150, end: 180 },
+                  }),
+            },
+          },
+        },
+      });
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID,
+            info: { id: messageID, role: "assistant", time: { created: 1, completed: 2 } },
+          },
+        },
+        // MiMo-style models report reasoning parts with no readable text.
+        reasoningPart("reasoning-1", "", { start: 100 }),
+        toolPart("running"),
+        toolPart("completed"),
+        reasoningPart("reasoning-1", "", { start: 100, end: 200 }),
+        reasoningPart("reasoning-2", "", { start: 300 }),
+        { type: "session.compacted", properties: { sessionID } },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "thread.state.changed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = yield* Fiber.join(eventsFiber);
+      const isItemLifecycle = (
+        event: ProviderRuntimeEvent,
+      ): event is Extract<
+        ProviderRuntimeEvent,
+        { type: "item.started" | "item.updated" | "item.completed" }
+      > =>
+        event.type === "item.updated" ||
+        event.type === "item.completed" ||
+        event.type === "item.started";
+      const lifecycle = events.filter(isItemLifecycle);
+      NodeAssert.deepEqual(
+        lifecycle.map((event) => [
+          event.type,
+          event.itemId,
+          event.payload.itemType,
+          event.payload.status,
+        ]),
+        [
+          ["item.updated", "reasoning-1", "reasoning", "inProgress"],
+          ["item.updated", "call-bash", "command_execution", "inProgress"],
+          ["item.completed", "call-bash", "command_execution", "completed"],
+          ["item.completed", "reasoning-1", "reasoning", "completed"],
+          ["item.updated", "reasoning-2", "reasoning", "inProgress"],
+        ],
+      );
+      // Structural boundaries only: no reasoning text is fabricated into
+      // lifecycle events, and empty reasoning emits no text deltas either.
+      for (const event of lifecycle.filter((event) => event.payload.itemType === "reasoning")) {
+        NodeAssert.equal(event.payload.title, "Thinking");
+        NodeAssert.equal(event.payload.detail, undefined);
+      }
+      NodeAssert.deepEqual(
+        events
+          .filter((event) => event.type === "content.delta")
+          .map((event) => [event.payload.streamKind, event.payload.delta]),
+        [],
+      );
+      const firstReasoning = lifecycle[0]!;
+      const reasoningCompletion = lifecycle[3]!;
+      NodeAssert.equal(firstReasoning.createdAt, "1970-01-01T00:00:00.100Z");
+      NodeAssert.equal(reasoningCompletion.createdAt, "1970-01-01T00:00:00.200Z");
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("maps native task progress only while a turn is active", () =>

@@ -848,7 +848,14 @@ export function runtimeEventToActivities(
     }
 
     case "item.updated": {
-      if (!isToolLifecycleItemType(event.payload.itemType)) {
+      // Reasoning items project like tools so clients can render thinking
+      // segments as activity boundaries. Reasoning text itself never arrives
+      // here (content.delta drops non-assistant text above), and adapters must
+      // not put it in lifecycle detail either.
+      if (
+        !isToolLifecycleItemType(event.payload.itemType) &&
+        event.payload.itemType !== "reasoning"
+      ) {
         return [];
       }
       // A streaming update's `data` carries the full tool output accumulated
@@ -887,7 +894,11 @@ export function runtimeEventToActivities(
     }
 
     case "item.completed": {
-      if (!isToolLifecycleItemType(event.payload.itemType)) {
+      // See item.updated above: reasoning lifecycle becomes thinking activity.
+      if (
+        !isToolLifecycleItemType(event.payload.itemType) &&
+        event.payload.itemType !== "reasoning"
+      ) {
         return [];
       }
       return [

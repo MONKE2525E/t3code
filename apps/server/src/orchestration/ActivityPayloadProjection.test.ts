@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
-import { projectActivityPayload } from "./ActivityPayloadProjection.ts";
+import {
+  projectActivityPayload,
+  projectThreadDetailSnapshot,
+} from "./ActivityPayloadProjection.ts";
 
 function activity(payload: Record<string, unknown>): OrchestrationThreadActivity {
   return {
@@ -342,5 +345,64 @@ describe("projectActivityPayload", () => {
     });
     const projected = projectActivityPayload(source);
     expect(projected.payload).toEqual(source.payload);
+  });
+});
+
+describe("projectThreadDetailSnapshot reasoning retention", () => {
+  const lifecycleActivity = (
+    id: string,
+    kind: "tool.updated" | "tool.completed",
+    itemType: string,
+    toolCallId: string,
+    createdAt: string,
+  ): OrchestrationThreadActivity =>
+    ({
+      id,
+      tone: "tool",
+      kind,
+      summary: itemType === "reasoning" ? "Thinking" : "Render",
+      payload: {
+        itemType,
+        toolCallId,
+        status: kind === "tool.completed" ? "completed" : "inProgress",
+        title: itemType === "reasoning" ? "Thinking" : "Render",
+      },
+      turnId: "turn-1",
+      createdAt,
+    }) as unknown as OrchestrationThreadActivity;
+
+  it("keeps reasoning updates their completion would otherwise supersede", () => {
+    const snapshot = {
+      snapshotSequence: 0,
+      thread: {
+        activities: [
+          lifecycleActivity("reasoning-updated", "tool.updated", "reasoning", "reasoning-1", "t1"),
+          lifecycleActivity("tool-updated", "tool.updated", "command_execution", "tool-1", "t2"),
+          lifecycleActivity(
+            "tool-completed",
+            "tool.completed",
+            "command_execution",
+            "tool-1",
+            "t3",
+          ),
+          lifecycleActivity(
+            "reasoning-completed",
+            "tool.completed",
+            "reasoning",
+            "reasoning-1",
+            "t4",
+          ),
+        ],
+      },
+    } as unknown as Parameters<typeof projectThreadDetailSnapshot>[0];
+
+    const projected = projectThreadDetailSnapshot(snapshot);
+    // The ordinary tool update is slimmed away, but the reasoning pair must
+    // survive reloads: clients bound segment durations from the update.
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      "reasoning-updated",
+      "tool-completed",
+      "reasoning-completed",
+    ]);
   });
 });

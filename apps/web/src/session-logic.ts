@@ -13,6 +13,8 @@ import {
   commandDetailRepeatsCommand,
   extractCommandOutputText,
   extractWorkLogToolLifecycleStatus,
+  isReasoningItemPayload,
+  isReasoningSegmentEntry,
   isWorktreeSetupActivity,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
@@ -175,6 +177,12 @@ export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolea
   // task.progress (tone "thinking") and the neutral filter was swallowing
   // them exactly while the fleet ran — the one moment they matter most.
   if (entry.agentSpawn !== undefined) {
+    return false;
+  }
+  // Reasoning segments are structural boundaries, not tool output: a
+  // completed thought renders its duration, and an interrupted one keeps the
+  // honest "Thinking" row where the turn stopped.
+  if (isReasoningSegmentEntry(entry)) {
     return false;
   }
   if (!workLogEntryIsToolLike(entry)) {
@@ -572,13 +580,16 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       : null
     : extractToolDetail(payload, title ?? activity.summary);
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
+  // Reasoning lifecycle rides the tool activity kinds with a `reasoning`
+  // item type; clients render it as thinking segments, never as tool rows.
+  const isReasoningSegment = isReasoningItemPayload(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
     label: taskLabel || activity.summary,
     tone:
-      activity.kind === "task.progress"
+      activity.kind === "task.progress" || isReasoningSegment
         ? "thinking"
         : activity.tone === "approval"
           ? "info"
@@ -707,6 +718,11 @@ function toolLifecycleCollapseMapKey(entry: DerivedWorkLogEntry): string | undef
   ) {
     return undefined;
   }
+  // Reasoning updates pair with their completion in the timeline for
+  // durations; merging them here would erase the segment start.
+  if (isReasoningSegmentEntry(entry)) {
+    return undefined;
+  }
   return entry.toolCallId ? `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}` : undefined;
 }
 
@@ -809,6 +825,9 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
+  if (isReasoningSegmentEntry(previous) || isReasoningSegmentEntry(next)) {
+    return false;
+  }
   if (
     previous.sourceActivityKind !== "tool.updated" &&
     previous.sourceActivityKind !== "tool.completed"
@@ -903,6 +922,10 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
     entry.sourceActivityKind !== "tool.updated" &&
     entry.sourceActivityKind !== "tool.completed"
   ) {
+    return undefined;
+  }
+  // See toolLifecycleCollapseMapKey: reasoning pairs must reach the timeline.
+  if (isReasoningSegmentEntry(entry)) {
     return undefined;
   }
   if (entry.toolCallId) {

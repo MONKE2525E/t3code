@@ -634,6 +634,14 @@ function dropSupersededToolUpdatedActivities(
     if (activity.kind !== "tool.updated") {
       return true;
     }
+    // Reasoning updates are structural, not streaming noise: clients pair
+    // each update with its completion to bound the thinking segment's
+    // duration, and the completion alone carries no start time. Segments are
+    // rare (one pair per thought) next to per-chunk tool updates, so keeping
+    // them costs nothing.
+    if (asRecord(activity.payload)?.itemType === "reasoning") {
+      return true;
+    }
     const identity = toolLifecycleIdentity(activity);
     if (!identity) {
       return true;

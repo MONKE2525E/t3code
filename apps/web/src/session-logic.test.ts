@@ -2497,3 +2497,86 @@ describe("session activity performance", () => {
     });
   });
 });
+
+describe("reasoning segment derivation", () => {
+  const reasoningActivity = (
+    id: string,
+    kind: "tool.updated" | "tool.completed",
+    createdAt: string,
+  ) =>
+    makeActivity({
+      id,
+      kind,
+      summary: "Thinking",
+      turnId: "turn-reasoning",
+      createdAt,
+      payload: {
+        itemType: "reasoning",
+        toolCallId: "reasoning-1",
+        status: kind === "tool.completed" ? "completed" : "inProgress",
+        title: "Thinking",
+      },
+    });
+
+  it("derives thinking tone and keeps the lifecycle pair uncollapsed", () => {
+    const entries = deriveWorkLogEntries([
+      reasoningActivity("reasoning-updated", "tool.updated", "2026-02-23T00:00:01.000Z"),
+      reasoningActivity("reasoning-completed", "tool.completed", "2026-02-23T00:00:05.000Z"),
+    ]);
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      tone: "thinking",
+      label: "Thinking",
+      toolCallId: "reasoning-1",
+      toolLifecycleStatus: "inProgress",
+    });
+    expect(entries[1]).toMatchObject({
+      tone: "thinking",
+      toolLifecycleStatus: "completed",
+    });
+    // No reasoning text may hitch a ride: labels and details stay structural.
+    for (const entry of entries) {
+      expect(entry.detail).toBeUndefined();
+    }
+  });
+
+  it("does not hide reasoning segments as neutral tool rows", () => {
+    const entries = deriveWorkLogEntries([
+      reasoningActivity("reasoning-completed", "tool.completed", "2026-02-23T00:00:05.000Z"),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(workEntryIndicatesToolNeutralStatus(entries[0]!)).toBe(false);
+  });
+
+  it("still collapses ordinary tool updates into their completion", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "tool-updated",
+        kind: "tool.updated",
+        turnId: "turn-reasoning",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "tool-1",
+          status: "inProgress",
+          title: "Render",
+        },
+      }),
+      makeActivity({
+        id: "tool-completed",
+        kind: "tool.completed",
+        turnId: "turn-reasoning",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "tool-1",
+          status: "completed",
+          title: "Render",
+        },
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ id: "tool-completed", toolLifecycleStatus: "completed" });
+  });
+});

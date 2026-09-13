@@ -19,10 +19,15 @@ import {
   commandDetailRepeatsCommand,
   extractCommandOutputText,
   extractWorkLogToolLifecycleStatus,
+  formatThinkingSegmentLabel,
+  groupReasoningSegmentEntries,
+  isReasoningItemPayload,
+  isReasoningSegmentEntry,
   isWorktreeSetupActivity,
   liveActivityToolStatus,
   normalizeCompactToolLabel,
   omitSupersededLifecycleMarkers,
+  representativeReasoningSegmentEntry,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupAction,
@@ -494,7 +499,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     ...(taskId ? { taskId } : {}),
     label: taskLabel || activity.summary,
     tone:
-      activity.kind === "task.progress"
+      activity.kind === "task.progress" || isReasoningItemPayload(payload)
         ? "thinking"
         : activity.tone === "approval"
           ? "info"
@@ -809,6 +814,11 @@ function toolLifecycleCollapseMapKey(entry: DerivedWorkLogEntry): string | undef
   ) {
     return undefined;
   }
+  // Reasoning updates pair with their completion in the feed for durations;
+  // merging them here would erase the segment start (mirrors web).
+  if (isReasoningSegmentEntry(entry)) {
+    return undefined;
+  }
   return entry.toolCallId ? `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}` : undefined;
 }
 
@@ -816,6 +826,9 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
+  if (isReasoningSegmentEntry(previous) || isReasoningSegmentEntry(next)) {
+    return false;
+  }
   if (
     previous.sourceActivityKind !== "tool.updated" &&
     previous.sourceActivityKind !== "tool.completed"
@@ -901,6 +914,10 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
     entry.sourceActivityKind !== "tool.updated" &&
     entry.sourceActivityKind !== "tool.completed"
   ) {
+    return undefined;
+  }
+  // See toolLifecycleCollapseMapKey: reasoning pairs must reach the feed.
+  if (isReasoningSegmentEntry(entry)) {
     return undefined;
   }
   if (entry.toolCallId) {
@@ -1902,6 +1919,9 @@ function appendActivityGroupRows(
     entry.activities.filter(
       (activity) =>
         !(activity.toolLike && activity.status === "neutral") ||
+        // Reasoning segments are structural boundaries, not tool output:
+        // completed thoughts render their duration, live ones shimmer.
+        isReasoningSegmentEntry(activity.workEntry) ||
         (isWorking &&
           activity.lifecycleStatus === "inProgress" &&
           activity.turnId === unsettledTurnId),
@@ -1928,6 +1948,15 @@ function appendActivityGroupRows(
   for (const activity of activities) {
     const spawn = activity.workEntry.agentSpawn;
     if (activity.workEntry.tone !== "error" && spawn === undefined) {
+      // A thinking segment ends the tool run before it so thought and
+      // action stay in separate compact rows (mirrors web grouping).
+      const reasoning = isReasoningSegmentEntry(activity.workEntry);
+      if (
+        groupableRun.length > 0 &&
+        isReasoningSegmentEntry(groupableRun.at(-1)!.workEntry) !== reasoning
+      ) {
+        flushGroupableRun(false);
+      }
       groupableRun.push(activity);
       continue;
     }
@@ -1973,6 +2002,19 @@ function appendToolGroupRows(
     : activities[0]!.id;
   const groupId = `work-group:${identity}`;
   const expanded = expandedWorkGroupIds.has(groupId);
+  if (activities.every((activity) => isReasoningSegmentEntry(activity.workEntry))) {
+    appendThinkingSegmentRows(
+      result,
+      sourceGroup,
+      activities,
+      groupId,
+      expanded,
+      unsettledTurnId,
+      isWorking,
+      activeTail,
+    );
+    return;
+  }
   const latestActiveActivity = activities.findLast(
     (activity) =>
       isWorking &&
@@ -2066,6 +2108,68 @@ function appendToolGroupRows(
         activity.lifecycleStatus === "inProgress" &&
         activity.turnId === unsettledTurnId,
     })),
+  });
+}
+
+/**
+ * Settled thinking renders one compact row per thought ("Thought for 4s");
+ * the live thought shimmers in the turn's live slot like a running tool.
+ */
+function appendThinkingSegmentRows(
+  result: ThreadFeedEntry[],
+  sourceGroup: Extract<ThreadFeedEntry, { readonly type: "activity-group" }>,
+  activities: ReadonlyArray<ThreadFeedActivity>,
+  groupId: string,
+  expanded: boolean,
+  unsettledTurnId: TurnId | null,
+  isWorking: boolean,
+  activeTail: boolean,
+): void {
+  const segments = groupReasoningSegmentEntries(activities.map((activity) => activity.workEntry));
+  segments.forEach((segment, segmentIndex) => {
+    const representative = representativeReasoningSegmentEntry(segment.entries);
+    const activity = activities.find((candidate) => candidate.workEntry === representative)!;
+    const live =
+      isWorking &&
+      segment.entries.some(
+        (entry) => entry.toolLifecycleStatus === "inProgress" && entry.turnId === unsettledTurnId,
+      );
+    const shimmer = live && activeTail && segmentIndex === segments.length - 1;
+    result.push({
+      type: "work-toggle",
+      // The shimmering row is the turn's live slot; it keeps that identity
+      // until "Thinking" takes the slot (mirrors the tool live row).
+      id: shimmer
+        ? LIVE_ACTIVITY_ROW_ID
+        : `work-toggle:${groupId}:${segment.span.toolCallId ?? activity.id}`,
+      createdAt: segment.span.startedAt ?? activity.createdAt,
+      turnId: sourceGroup.turnId,
+      groupId,
+      hiddenCount: segment.entries.length,
+      expanded,
+      summary: live ? "Thinking" : formatThinkingSegmentLabel(segment.span),
+      summaryKind: toolGroupSummaryKind(segment.entries),
+      hasFailure: false,
+      live,
+      shimmer,
+    });
+    if (!expanded) {
+      return;
+    }
+    result.push({
+      type: "activity-group",
+      id: `work-details:${groupId}:${segment.span.toolCallId ?? activity.id}`,
+      createdAt: segment.entries[0]!.createdAt,
+      turnId: segment.entries[0]!.turnId,
+      activities: segment.entries.map((entry) => ({
+        ...activities.find((candidate) => candidate.workEntry === entry)!,
+        groupedToolDetail: true,
+        live:
+          isWorking &&
+          entry.toolLifecycleStatus === "inProgress" &&
+          entry.turnId === unsettledTurnId,
+      })),
+    });
   });
 }
 
