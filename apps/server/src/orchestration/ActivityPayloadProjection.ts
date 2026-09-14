@@ -609,45 +609,88 @@ function dropSupersededToolUpdatedActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ReadonlyArray<OrchestrationThreadActivity> {
   const completionIndicesByKey = new Map<string, number[]>();
+  const updateIndicesByKey = new Map<string, number[]>();
   for (let index = 0; index < activities.length; index += 1) {
     const activity = activities[index]!;
-    if (activity.kind !== "tool.completed") {
-      continue;
-    }
     const identity = toolLifecycleIdentity(activity);
     if (!identity) {
       continue;
     }
     const key = `${activity.turnId ?? ""}\u0000${identity}`;
-    const indices = completionIndicesByKey.get(key);
+    if (activity.kind === "tool.completed") {
+      const indices = completionIndicesByKey.get(key);
+      if (indices) {
+        indices.push(index);
+      } else {
+        completionIndicesByKey.set(key, [index]);
+      }
+      continue;
+    }
+    if (activity.kind !== "tool.updated") {
+      continue;
+    }
+    const indices = updateIndicesByKey.get(key);
     if (indices) {
       indices.push(index);
     } else {
-      completionIndicesByKey.set(key, [index]);
+      updateIndicesByKey.set(key, [index]);
     }
   }
-  if (completionIndicesByKey.size === 0) {
+  if (completionIndicesByKey.size === 0 && updateIndicesByKey.size === 0) {
     return activities;
   }
 
-  return activities.filter((activity, index) => {
-    if (activity.kind !== "tool.updated") {
-      return true;
+  // Completed thoughts: keep the first update for start timing only.
+  // In-flight thoughts: keep the latest update for current text.
+  // Intermediate streaming updates grow full-body detail and are dropped
+  // from snapshots (live clients already received them as appends).
+  const retainedReasoningUpdateIndices = new Set<number>();
+  const stripDetailFromReasoningUpdateIndices = new Set<number>();
+  for (const [key, updateIndices] of updateIndicesByKey) {
+    const firstUpdate = updateIndices[0];
+    const lastUpdate = updateIndices[updateIndices.length - 1];
+    if (firstUpdate === undefined || lastUpdate === undefined) {
+      continue;
     }
-    // Reasoning updates are structural, not streaming noise: clients pair
-    // each update with its completion to bound the thinking segment's
-    // duration, and the completion alone carries no start time. Segments are
-    // rare (one pair per thought) next to per-chunk tool updates, so keeping
-    // them costs nothing.
-    if (asRecord(activity.payload)?.itemType === "reasoning") {
-      return true;
+    const payload = asRecord(activities[firstUpdate]?.payload);
+    if (payload?.itemType !== "reasoning") {
+      continue;
+    }
+    const hasLaterCompletion =
+      completionIndicesByKey.get(key)?.some((index) => index > firstUpdate) ?? false;
+    if (hasLaterCompletion) {
+      retainedReasoningUpdateIndices.add(firstUpdate);
+      stripDetailFromReasoningUpdateIndices.add(firstUpdate);
+    } else {
+      retainedReasoningUpdateIndices.add(lastUpdate);
+    }
+  }
+
+  return activities.flatMap((activity, index) => {
+    if (activity.kind !== "tool.updated") {
+      return [activity];
     }
     const identity = toolLifecycleIdentity(activity);
     if (!identity) {
-      return true;
+      return [activity];
     }
-    const indices = completionIndicesByKey.get(`${activity.turnId ?? ""}\u0000${identity}`);
-    return !indices?.some((completionIndex) => completionIndex > index);
+    const key = `${activity.turnId ?? ""}\u0000${identity}`;
+    if (asRecord(activity.payload)?.itemType === "reasoning") {
+      if (!retainedReasoningUpdateIndices.has(index)) {
+        return [];
+      }
+      if (!stripDetailFromReasoningUpdateIndices.has(index)) {
+        return [activity];
+      }
+      const payload = asRecord(activity.payload);
+      if (!payload || payload.detail === undefined) {
+        return [activity];
+      }
+      const { detail: _detail, ...rest } = payload;
+      return [{ ...activity, payload: rest }];
+    }
+    const indices = completionIndicesByKey.get(key);
+    return indices?.some((completionIndex) => completionIndex > index) ? [] : [activity];
   });
 }
 

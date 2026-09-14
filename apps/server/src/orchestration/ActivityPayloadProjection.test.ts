@@ -371,7 +371,7 @@ describe("projectThreadDetailSnapshot reasoning retention", () => {
       createdAt,
     }) as unknown as OrchestrationThreadActivity;
 
-  it("keeps reasoning updates their completion would otherwise supersede", () => {
+  it("keeps the reasoning start update that completion would otherwise supersede", () => {
     const snapshot = {
       snapshotSequence: 0,
       thread: {
@@ -397,12 +397,102 @@ describe("projectThreadDetailSnapshot reasoning retention", () => {
     } as unknown as Parameters<typeof projectThreadDetailSnapshot>[0];
 
     const projected = projectThreadDetailSnapshot(snapshot);
-    // The ordinary tool update is slimmed away, but the reasoning pair must
-    // survive reloads: clients bound segment durations from the update.
+    // The ordinary tool update is slimmed away, but the reasoning start update
+    // must survive reloads: clients bound segment durations from it.
     expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
       "reasoning-updated",
       "tool-completed",
       "reasoning-completed",
     ]);
+  });
+
+  it("drops intermediate reasoning text copies while keeping start timing and final text", () => {
+    const chunks = Array.from({ length: 40 }, (_, index) => `word${index} `);
+    const growing = chunks.map((_, index) => chunks.slice(0, index + 1).join(""));
+    const finalText = growing[growing.length - 1]!;
+    expect(finalText.length).toBeGreaterThan(180);
+
+    const activities: OrchestrationThreadActivity[] = growing.map((detail, index) => {
+      const row = lifecycleActivity(
+        `reasoning-updated-${index}`,
+        "tool.updated",
+        "reasoning",
+        "reasoning-stream",
+        `t${String(index).padStart(2, "0")}`,
+      );
+      return {
+        ...row,
+        payload: {
+          ...(row.payload as Record<string, unknown>),
+          detail,
+        },
+      } as OrchestrationThreadActivity;
+    });
+    activities.push({
+      ...lifecycleActivity(
+        "reasoning-completed",
+        "tool.completed",
+        "reasoning",
+        "reasoning-stream",
+        "t99",
+      ),
+      payload: {
+        itemType: "reasoning",
+        toolCallId: "reasoning-stream",
+        status: "completed",
+        title: "Thinking",
+        detail: finalText,
+      },
+    } as OrchestrationThreadActivity);
+
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 0,
+      thread: { activities },
+    } as unknown as Parameters<typeof projectThreadDetailSnapshot>[0]);
+
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      "reasoning-updated-0",
+      "reasoning-completed",
+    ]);
+    const start = projected.thread.activities[0]!;
+    const completed = projected.thread.activities[1]!;
+    expect((start.payload as Record<string, unknown>).detail).toBeUndefined();
+    expect((completed.payload as Record<string, unknown>).detail).toBe(finalText);
+    // Snapshot stores O(1) bodies, not every cumulative prefix.
+    const detailBytes = projected.thread.activities.reduce((total, activity) => {
+      const detail = (activity.payload as Record<string, unknown>).detail;
+      return total + (typeof detail === "string" ? detail.length : 0);
+    }, 0);
+    expect(detailBytes).toBe(finalText.length);
+  });
+
+  it("keeps only the latest in-flight reasoning update for mid-turn reloads", () => {
+    const activities = [1, 2, 3].map((n) => {
+      const row = lifecycleActivity(
+        `reasoning-updated-${n}`,
+        "tool.updated",
+        "reasoning",
+        "reasoning-live",
+        `t${n}`,
+      );
+      return {
+        ...row,
+        payload: {
+          ...(row.payload as Record<string, unknown>),
+          detail: `partial-${n}`,
+        },
+      } as OrchestrationThreadActivity;
+    });
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 0,
+      thread: { activities },
+    } as unknown as Parameters<typeof projectThreadDetailSnapshot>[0]);
+
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      "reasoning-updated-3",
+    ]);
+    expect((projected.thread.activities[0]?.payload as Record<string, unknown>).detail).toBe(
+      "partial-3",
+    );
   });
 });
