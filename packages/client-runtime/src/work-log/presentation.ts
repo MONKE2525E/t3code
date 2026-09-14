@@ -377,8 +377,8 @@ export function isReasoningItemPayload(payload: unknown): boolean {
  * through the tool activity kinds with a `reasoning` item type, and the
  * clients derive the thinking tone from that. Optional provider-supplied
  * reasoning text rides lifecycle `detail` when present; empty reasoning stays
- * structural only. Subagent progress rows share
- * the thinking tone but ride `task.progress`, so the kind check keeps them * out of segment handling.
+ * structural only. Subagent progress rows share the thinking tone but ride
+ * `task.progress`, so the kind check keeps them out of segment handling.
  */
 export function isReasoningSegmentEntry(
   entry: Pick<WorkLogPresentationEntry, "tone" | "sourceActivityKind">,
