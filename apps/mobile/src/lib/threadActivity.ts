@@ -2233,6 +2233,9 @@ function appendThinkingSegmentRows(
       activity.id === thinkingLive.designatedThinkingActivityId &&
       !thinkingLive.hasLiveToolActivity;
     const shimmer = live;
+    // Match web/Codex: provider reasoning text is visible under the Thought
+    // label by default, not hidden behind a closed disclosure.
+    const showBody = expanded || Boolean(entry.detail?.trim());
     result.push({
       type: "work-toggle",
       // The shimmering row is the turn's live slot; it keeps that identity
@@ -2242,14 +2245,14 @@ function appendThinkingSegmentRows(
       turnId: sourceGroup.turnId,
       groupId,
       hiddenCount: 1,
-      expanded,
+      expanded: showBody,
       summary: live ? "Thinking" : formatThinkingSegmentLabel(span),
       summaryKind: toolGroupSummaryKind([entry]),
       hasFailure: false,
       live,
       shimmer,
     });
-    if (!expanded) {
+    if (!showBody) {
       continue;
     }
     result.push({

@@ -3538,6 +3538,65 @@ describe("reasoning segments", () => {
     ]);
   });
 
+  it("shows provider reasoning text under Thought rows without requiring expand", () => {
+    const text =
+      "The user wants to know their opencode version. I should run the command to check.";
+    const thread = makeThread({
+      id: ThreadId.make("segment-visible-text"),
+      projectId: ProjectId.make("project-1"),
+      title: "Visible thoughts",
+      latestTurn: settledTurn,
+      activities: [
+        makeActivity({
+          id: EventId.make("thought-text-updated"),
+          kind: "tool.updated",
+          summary: "Thinking",
+          tone: "tool",
+          createdAt: at(0),
+          turnId,
+          payload: {
+            itemType: "reasoning",
+            toolCallId: "thought-text",
+            status: "inProgress",
+            title: "Thinking",
+            detail: "The user wants",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("thought-text-completed"),
+          kind: "tool.completed",
+          summary: "Thinking",
+          tone: "tool",
+          createdAt: at(4),
+          turnId,
+          payload: {
+            itemType: "reasoning",
+            toolCallId: "thought-text",
+            status: "completed",
+            title: "Thinking",
+            detail: text,
+          },
+        }),
+      ],
+    });
+    // No expanded work groups — text should still surface.
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      settledTurn,
+      new Set([turnId]),
+    );
+    expect(summaries(rows)).toEqual(["Thought for 4.0s"]);
+    const detailGroup = rows.find(
+      (row) => row.type === "activity-group" && row.id.startsWith("work-details:"),
+    );
+    expect(detailGroup?.type).toBe("activity-group");
+    if (detailGroup?.type === "activity-group") {
+      expect(detailGroup.activities[0]?.workEntry.detail).toBe(text);
+    }
+    const toggle = rows.find((row) => row.type === "work-toggle");
+    expect(toggle).toMatchObject({ type: "work-toggle", expanded: true });
+  });
+
   it("keeps settled history monotonic while the live tail alternates", () => {
     const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
     const commentary = {

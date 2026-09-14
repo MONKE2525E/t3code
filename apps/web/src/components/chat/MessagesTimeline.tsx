@@ -2487,41 +2487,50 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
   }
   const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
+  const thinkingText =
+    row.entry.tone === "thinking" ? row.entry.detail?.trim() || undefined : undefined;
 
   return (
-    <button
-      type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      aria-label={failed ? `${label}, tool call failed` : undefined}
-      aria-expanded={row.expanded}
-      onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
-    >
-      <LiveActivityRow
-        label={
-          row.entry.questionAnswer ? (
-            <span className="flex min-w-0 gap-1.5">
-              <span className="shrink-0">{label}</span>
-              <span
-                className={cn(
-                  "truncate",
-                  !row.expanded && hasQuestionAnswer(row.entry.questionAnswer)
-                    ? "text-foreground"
-                    : "text-muted-foreground",
-                )}
-              >
-                {getQuestionAnswerPreview(row.entry.questionAnswer)}
+    <div className="flex w-full max-w-full flex-col">
+      <button
+        type="button"
+        className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        aria-label={failed ? `${label}, tool call failed` : undefined}
+        aria-expanded={row.expanded}
+        onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      >
+        <LiveActivityRow
+          label={
+            row.entry.questionAnswer ? (
+              <span className="flex min-w-0 gap-1.5">
+                <span className="shrink-0">{label}</span>
+                <span
+                  className={cn(
+                    "truncate",
+                    !row.expanded && hasQuestionAnswer(row.entry.questionAnswer)
+                      ? "text-foreground"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {getQuestionAnswerPreview(row.entry.questionAnswer)}
+                </span>
               </span>
-            </span>
-          ) : (
-            label
-          )
-        }
-        iconName={workEntryIconName(row.entry)}
-        toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
-        failed={failed}
-        active={row.active}
-      />
-    </button>
+            ) : (
+              label
+            )
+          }
+          iconName={workEntryIconName(row.entry)}
+          toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
+          failed={failed}
+          active={row.active}
+        />
+      </button>
+      {thinkingText ? (
+        <div className="ms-7 mt-1 rounded-md bg-muted/40 px-3 py-2">
+          <pre className={toolCallExpandedBodyClassName}>{thinkingText}</pre>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -4037,9 +4046,21 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
   const { threadRef, onImageExpand } = use(TimelineRowCtx);
   const groupView = use(WorkGroupViewCtx);
+  const thinkingText = workEntry.tone === "thinking" ? workEntry.detail?.trim() : undefined;
+  // Codex shows readable thought text inline under the Thought label. Default
+  // open when provider text exists; the user can still collapse it.
   const [expanded, setExpanded] = useState(
-    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
+    () => Boolean(thinkingText) || (groupView?.state.expandedEntries.has(workEntry.id) ?? false),
   );
+  const hadThinkingTextRef = useRef(Boolean(thinkingText));
+  useEffect(() => {
+    const hasText = Boolean(thinkingText);
+    if (hasText && !hadThinkingTextRef.current) {
+      setExpanded(true);
+      groupView?.state.expandedEntries.add(workEntry.id);
+    }
+    hadThinkingTextRef.current = hasText;
+  }, [groupView, thinkingText, workEntry.id]);
   const toggleExpanded = () => {
     const next = !expanded;
     if (groupView) {
