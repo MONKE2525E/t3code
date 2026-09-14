@@ -466,14 +466,14 @@ describe("projectThreadDetailSnapshot reasoning retention", () => {
     expect(detailBytes).toBe(finalText.length);
   });
 
-  it("keeps only the latest in-flight reasoning update for mid-turn reloads", () => {
-    const activities = [1, 2, 3].map((n) => {
+  it("keeps first and latest in-flight reasoning updates across distinct createdAt values", () => {
+    const activities = [1, 2, 3, 4, 5].map((n) => {
       const row = lifecycleActivity(
         `reasoning-updated-${n}`,
         "tool.updated",
         "reasoning",
         "reasoning-live",
-        `t${n}`,
+        `2026-08-01T10:00:0${n}.000Z`,
       );
       return {
         ...row,
@@ -489,10 +489,48 @@ describe("projectThreadDetailSnapshot reasoning retention", () => {
     } as unknown as Parameters<typeof projectThreadDetailSnapshot>[0]);
 
     expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
-      "reasoning-updated-3",
+      "reasoning-updated-1",
+      "reasoning-updated-5",
+    ]);
+    expect(projected.thread.activities).toHaveLength(2);
+    expect(projected.thread.activities[0]?.createdAt).toBe("2026-08-01T10:00:01.000Z");
+    expect(
+      (projected.thread.activities[0]?.payload as Record<string, unknown>).detail,
+    ).toBeUndefined();
+    expect(projected.thread.activities[1]?.createdAt).toBe("2026-08-01T10:00:05.000Z");
+    expect((projected.thread.activities[1]?.payload as Record<string, unknown>).detail).toBe(
+      "partial-5",
+    );
+  });
+
+  it("keeps a single in-flight reasoning update when first and latest are the same row", () => {
+    const row = lifecycleActivity(
+      "reasoning-updated-only",
+      "tool.updated",
+      "reasoning",
+      "reasoning-live",
+      "2026-08-01T10:00:01.000Z",
+    );
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 0,
+      thread: {
+        activities: [
+          {
+            ...row,
+            payload: {
+              ...(row.payload as Record<string, unknown>),
+              detail: "only-partial",
+            },
+          } as OrchestrationThreadActivity,
+        ],
+      },
+    } as unknown as Parameters<typeof projectThreadDetailSnapshot>[0]);
+
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      "reasoning-updated-only",
     ]);
     expect((projected.thread.activities[0]?.payload as Record<string, unknown>).detail).toBe(
-      "partial-3",
+      "only-partial",
     );
   });
 });

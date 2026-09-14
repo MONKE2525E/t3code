@@ -640,10 +640,11 @@ function dropSupersededToolUpdatedActivities(
     return activities;
   }
 
-  // Completed thoughts: keep the first update for start timing only.
-  // In-flight thoughts: keep the latest update for current text.
-  // Intermediate streaming updates grow full-body detail and are dropped
-  // from snapshots (live clients already received them as appends).
+  // Completed thoughts: first update (start timing, no partial detail) +
+  // completion (final text). In-flight thoughts: first update (start timing,
+  // no partial detail) + latest update (current text). If first === latest,
+  // keep that single update with its detail. Intermediate streaming updates
+  // are dropped from snapshots (live clients already received them as appends).
   const retainedReasoningUpdateIndices = new Set<number>();
   const stripDetailFromReasoningUpdateIndices = new Set<number>();
   for (const [key, updateIndices] of updateIndicesByKey) {
@@ -658,11 +659,14 @@ function dropSupersededToolUpdatedActivities(
     }
     const hasLaterCompletion =
       completionIndicesByKey.get(key)?.some((index) => index > firstUpdate) ?? false;
+    retainedReasoningUpdateIndices.add(firstUpdate);
     if (hasLaterCompletion) {
-      retainedReasoningUpdateIndices.add(firstUpdate);
       stripDetailFromReasoningUpdateIndices.add(firstUpdate);
-    } else {
+      continue;
+    }
+    if (lastUpdate !== firstUpdate) {
       retainedReasoningUpdateIndices.add(lastUpdate);
+      stripDetailFromReasoningUpdateIndices.add(firstUpdate);
     }
   }
 
