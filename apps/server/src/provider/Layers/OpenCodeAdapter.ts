@@ -1748,6 +1748,7 @@ export function makeOpenCodeAdapter(
       raw: unknown,
     ) {
       const reasoningAlreadyStarted = part.reasoningStarted;
+      const reasoningAlreadyCompleted = part.completed;
       yield* emitReasoningSegmentEvent(context, part, turnId, raw);
       if (part.text === undefined) {
         // Native end can arrive without a new text body; still finalize.
@@ -1777,9 +1778,11 @@ export function makeOpenCodeAdapter(
             delta: deltaToEmit,
           },
         });
-        // Stream provider reasoning text onto the open thought item so clients
-        // can show growing detail without inventing a second channel. Skip the
-        // first sighting when emitReasoningSegmentEvent already carried detail.
+        // Stream reasoning growth as an incremental lifecycle detail chunk —
+        // not the full cumulative body. Clients concatenate inProgress updates;
+        // completion carries the final full text. That keeps live/persist
+        // transfer O(N) instead of O(N²) cumulative prefixes. Skip the first
+        // sighting when emitReasoningSegmentEvent already carried opening detail.
         if (
           part.type === "reasoning" &&
           !part.completed &&
@@ -1799,7 +1802,7 @@ export function makeOpenCodeAdapter(
               itemType: "reasoning",
               status: "inProgress",
               title: "Thinking",
-              detail: latestText,
+              detail: deltaToEmit,
             },
           });
         }
@@ -1807,6 +1810,37 @@ export function makeOpenCodeAdapter(
 
       // Complete after merge so lifecycle detail has the latest provider text.
       yield* completeReasoningSegmentPart(context, part, turnId, raw);
+      // OpenCode can edit a completed reasoning part later (reconnect/history).
+      // Refresh terminal detail without reopening the segment as live.
+      if (
+        part.type === "reasoning" &&
+        reasoningAlreadyCompleted &&
+        part.reasoningStarted &&
+        deltaToEmit.length > 0 &&
+        latestText.trim().length > 0
+      ) {
+        yield* emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId,
+            itemId: part.id,
+            createdAt:
+              part.time?.end !== undefined
+                ? isoFromEpochMs(part.time.end)
+                : part.time !== undefined
+                  ? isoFromEpochMs(part.time.start)
+                  : undefined,
+            raw,
+          })),
+          type: "item.completed",
+          payload: {
+            itemType: "reasoning",
+            status: "completed",
+            title: "Thinking",
+            detail: latestText,
+          },
+        });
+      }
 
       if (part.type === "text" && part.time?.end !== undefined && !part.completed) {
         part.completed = true;
@@ -2619,6 +2653,62 @@ export function makeOpenCodeAdapter(
               delta: deltaToEmit,
             },
           });
+          // Delta-only reasoning streams never revisit message.part.updated, so
+          // mirror the snapshot path: push an incremental lifecycle detail chunk
+          // (ingestion drops reasoning_text content.delta).
+          if (
+            existingPart.type === "reasoning" &&
+            existingPart.reasoningStarted &&
+            !existingPart.completed &&
+            nextText.trim().length > 0
+          ) {
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: event.properties.partID,
+                createdAt:
+                  existingPart.time !== undefined
+                    ? isoFromEpochMs(existingPart.time.start)
+                    : undefined,
+                raw: event,
+              })),
+              type: "item.updated",
+              payload: {
+                itemType: "reasoning",
+                status: "inProgress",
+                title: "Thinking",
+                detail: deltaToEmit,
+              },
+            });
+          } else if (
+            existingPart.type === "reasoning" &&
+            existingPart.reasoningStarted &&
+            existingPart.completed &&
+            nextText.trim().length > 0
+          ) {
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: event.properties.partID,
+                createdAt:
+                  existingPart.time?.end !== undefined
+                    ? isoFromEpochMs(existingPart.time.end)
+                    : existingPart.time !== undefined
+                      ? isoFromEpochMs(existingPart.time.start)
+                      : undefined,
+                raw: event,
+              })),
+              type: "item.completed",
+              payload: {
+                itemType: "reasoning",
+                status: "completed",
+                title: "Thinking",
+                detail: nextText,
+              },
+            });
+          }
           break;
         }
 

@@ -7129,6 +7129,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         [
           ["reasoning", "Thinking"],
           ["assistant_message", "Hello world"],
+          ["reasoning", "Thinking more"],
           ["assistant_message", "Fresh"],
           ["assistant_message", "Second"],
           ["reasoning", "New thoughts"],
@@ -7138,7 +7139,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       // Reasoning parts project lifecycle boundaries and carry provider text
       // on detail when present. This reconnect fixture stamps native end on
       // every snapshot, so each part sighting is one in-progress update plus
-      // an immediate completion (no mid-flight streaming updates).
+      // an immediate completion. A later edit ("Thinking more") refreshes the
+      // terminal detail without reopening the segment as live.
       const reasoningUpdates = events
         .filter((event) => event.type === "item.updated")
         .filter((event) => event.payload.itemType === "reasoning");
@@ -7156,10 +7158,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const reasoningCompletions = events
         .filter((event) => event.type === "item.completed")
         .filter((event) => event.payload.itemType === "reasoning");
-      NodeAssert.equal(reasoningCompletions.length, 2);
       NodeAssert.deepEqual(
         reasoningCompletions.map((event) => event.payload.detail),
-        ["Thinking", "New thoughts"],
+        ["Thinking", "Thinking more", "New thoughts"],
       );
       for (const completed of reasoningCompletions) {
         NodeAssert.equal(completed.itemId, "reasoning-part");
@@ -7374,7 +7375,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         reasoningLifecycle.map((event) => [event.type, event.payload.status, event.payload.detail]),
         [
           ["item.updated", "inProgress", "The user wants to know their opencode version."],
-          ["item.updated", "inProgress", finalText],
+          // Growth is incremental, not the full cumulative body.
+          ["item.updated", "inProgress", " I should run the command to check."],
           ["item.completed", "completed", finalText],
         ],
       );
@@ -7387,6 +7389,116 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           ["reasoning_text", " I should run the command to check."],
         ],
       );
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("streams delta-only reasoning growth onto lifecycle detail", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-reasoning-deltas");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "delta-reasoning-message";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID,
+            info: { id: messageID, role: "assistant", time: { created: 1, completed: 2 } },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "reasoning-delta",
+              sessionID,
+              messageID,
+              type: "reasoning",
+              text: "Start",
+              time: { start: 100 },
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID,
+            messageID,
+            partID: "reasoning-delta",
+            field: "text",
+            delta: " middle",
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID,
+            messageID,
+            partID: "reasoning-delta",
+            field: "text",
+            delta: " end",
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "part-bash",
+              sessionID,
+              messageID,
+              type: "tool",
+              callID: "call-bash",
+              tool: "bash",
+              state: {
+                status: "running",
+                input: { command: "pwd" },
+                title: "Working directory",
+                time: { start: 200 },
+              },
+            },
+          },
+        },
+        { type: "session.compacted", properties: { sessionID } },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "thread.state.changed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = yield* Fiber.join(eventsFiber);
+      const reasoningLifecycle = events
+        .filter(isItemLifecycleForTest)
+        .filter((event) => event.payload.itemType === "reasoning");
+      NodeAssert.deepEqual(
+        reasoningLifecycle.map((event) => [event.type, event.payload.status, event.payload.detail]),
+        [
+          ["item.updated", "inProgress", "Start"],
+          ["item.updated", "inProgress", " middle"],
+          ["item.updated", "inProgress", " end"],
+          ["item.completed", "completed", "Start middle end"],
+        ],
+      );
+      // Incremental chunks only — never the cumulative prefixes.
+      for (const event of reasoningLifecycle.filter((entry) => entry.type === "item.updated")) {
+        NodeAssert.ok(
+          event.payload.detail === undefined ||
+            event.payload.detail === "Start" ||
+            event.payload.detail === " middle" ||
+            event.payload.detail === " end",
+        );
+        NodeAssert.notEqual(event.payload.detail, "Start middle");
+        NodeAssert.notEqual(event.payload.detail, "Start middle end");
+      }
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped),
   );

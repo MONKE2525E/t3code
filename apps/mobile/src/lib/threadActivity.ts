@@ -556,9 +556,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (!taskDetailAsLabel && output) {
     entry.detail = output;
   } else if (!taskDetailAsLabel && typeof payload?.detail === "string") {
-    const detail = stripTrailingExitCode(payload.detail).output;
+    // Provider reasoning text is opaque — do not strip command exit-code suffixes.
+    const detail = isReasoningItemPayload(payload)
+      ? payload.detail
+      : stripTrailingExitCode(payload.detail).output;
     const data = asRecord(payload.data);
     const repeatsCommand =
+      !isReasoningItemPayload(payload) &&
       detail !== null &&
       commandDetailRepeatsCommand({
         detail,
@@ -851,7 +855,13 @@ function shouldCollapseToolLifecycleEntries(
     return false;
   }
   if (previous.sourceActivityKind === "tool.completed") {
-    return false;
+    // Allow corrective reasoning completions to refresh terminal detail.
+    return (
+      isReasoningSegmentEntry(previous) &&
+      isReasoningSegmentEntry(next) &&
+      previous.toolCallId !== undefined &&
+      previous.toolCallId === next.toolCallId
+    );
   }
   if (previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey) {
     return true;
@@ -870,7 +880,16 @@ function mergeDerivedWorkLogEntries(
   next: DerivedWorkLogEntry,
 ): DerivedWorkLogEntry {
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
-  const detail = next.detail ?? previous.detail;
+  // OpenCode streams inProgress reasoning detail as incremental chunks.
+  const reasoningMerge = isReasoningSegmentEntry(previous) && isReasoningSegmentEntry(next);
+  const detail =
+    reasoningMerge &&
+    previous.toolLifecycleStatus === "inProgress" &&
+    next.toolLifecycleStatus === "inProgress" &&
+    previous.detail !== undefined &&
+    next.detail !== undefined
+      ? `${previous.detail}${next.detail}`
+      : (next.detail ?? previous.detail);
   const viewedImagePath = next.viewedImagePath ?? previous.viewedImagePath;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
@@ -890,17 +909,15 @@ function mergeDerivedWorkLogEntries(
   const segmentStartedAt =
     next.segmentStartedAt ??
     previous.segmentStartedAt ??
-    (isReasoningSegmentEntry(previous) && isReasoningSegmentEntry(next)
-      ? previous.createdAt
-      : undefined);
+    (reasoningMerge ? previous.createdAt : undefined);
   // Reasoning pairs anchor at their end like web (chronological with the
   // tools that follow); other rows keep the launch anchor so streaming
-  // updates never move them.
-  const reasoningMerge = isReasoningSegmentEntry(previous) && isReasoningSegmentEntry(next);
+  // updates never move them. Keep a stable id across reasoning merges so
+  // list virtualization does not remount the Markdown row on every chunk.
   return {
     ...previous,
     ...next,
-    ...(!reasoningMerge ? { id: previous.id, createdAt: previous.createdAt } : {}),
+    ...(!reasoningMerge ? { id: previous.id, createdAt: previous.createdAt } : { id: previous.id }),
     ...(detail ? { detail } : {}),
     ...(viewedImagePath ? { viewedImagePath } : {}),
     ...(command ? { command } : {}),
@@ -2256,9 +2273,14 @@ function appendThinkingSegmentRows(
     const shimmer = live;
     const text = entry.detail?.trim() ?? "";
     if (reasoningHasVisibleText(entry) && text.length > 0) {
+      // Stable across streaming lifecycle merges: turn + reasoning identity.
+      const reasoningIdentity =
+        entry.toolCallId !== undefined
+          ? `${entry.turnId ?? sourceGroup.turnId ?? groupId}:${entry.toolCallId}`
+          : `${groupId}:${activity.id}`;
       result.push({
         type: "reasoning-markdown",
-        id: `reasoning-markdown:${groupId}:${activity.id}`,
+        id: `reasoning-markdown:${reasoningIdentity}`,
         createdAt: span.startedAt ?? activity.createdAt,
         turnId: sourceGroup.turnId,
         text,

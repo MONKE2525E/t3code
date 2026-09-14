@@ -2563,6 +2563,90 @@ describe("reasoning segment derivation", () => {
     });
   });
 
+  it("concatenates incremental in-progress reasoning detail chunks", () => {
+    const entries = deriveWorkLogEntries([
+      reasoningActivity("reasoning-updated-1", "tool.updated", "2026-02-23T00:00:01.000Z", {
+        detail: "Start",
+      }),
+      reasoningActivity("reasoning-updated-2", "tool.updated", "2026-02-23T00:00:02.000Z", {
+        detail: " middle",
+      }),
+      reasoningActivity("reasoning-updated-3", "tool.updated", "2026-02-23T00:00:03.000Z", {
+        detail: " end",
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "reasoning-updated-1",
+      tone: "thinking",
+      toolCallId: "reasoning-1",
+      toolLifecycleStatus: "inProgress",
+      detail: "Start middle end",
+      segmentStartedAt: "2026-02-23T00:00:01.000Z",
+    });
+  });
+
+  it("refreshes completed reasoning detail on a corrective completion", () => {
+    const entries = deriveWorkLogEntries([
+      reasoningActivity("reasoning-updated", "tool.updated", "2026-02-23T00:00:01.000Z", {
+        detail: "Thinking",
+      }),
+      reasoningActivity("reasoning-completed", "tool.completed", "2026-02-23T00:00:05.000Z", {
+        detail: "Thinking",
+      }),
+      reasoningActivity("reasoning-corrected", "tool.completed", "2026-02-23T00:00:06.000Z", {
+        detail: "Thinking more",
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "reasoning-updated",
+      toolLifecycleStatus: "completed",
+      detail: "Thinking more",
+      segmentStartedAt: "2026-02-23T00:00:01.000Z",
+    });
+  });
+
+  it("does not invent thought rows from status-less Codex-style reasoning payloads", () => {
+    // Mirrors Codex summaryPartAdded after ingestion gating: no lifecycle status.
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "codex-reasoning",
+        kind: "tool.updated",
+        summary: "Thinking",
+        turnId: "turn-reasoning",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        payload: {
+          itemType: "reasoning",
+          toolCallId: "codex-reasoning-1",
+          data: { text: "summary part" },
+        },
+      }),
+      makeActivity({
+        id: "codex-tool",
+        kind: "tool.completed",
+        summary: "Ran command",
+        turnId: "turn-reasoning",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-1",
+          status: "completed",
+          title: "Ran command",
+          command: "git status",
+        },
+      }),
+    ]);
+
+    expect(entries.map((entry) => entry.tone)).toEqual(["thinking", "tool"]);
+    // Without lifecycle status the Codex-shaped row cannot become the live
+    // designated segment; timeline presentation treats it as non-live structure.
+    expect(entries[0]?.toolLifecycleStatus).toBeUndefined();
+    expect(entries[0]?.detail).toBeUndefined();
+  });
+
   it("pairs reasoning timing across interleaved tool activity", () => {
     const tool = (id: string, createdAt: string) =>
       makeActivity({

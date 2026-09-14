@@ -577,18 +577,23 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
-  const detail = isTaskActivity
-    ? !taskDetailAsLabel &&
-      payload &&
-      typeof payload.detail === "string" &&
-      payload.detail.length > 0
-      ? stripTrailingExitCode(payload.detail).output
-      : null
-    : extractToolDetail(payload, title ?? activity.summary);
-  const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   // Reasoning lifecycle rides the tool activity kinds with a `reasoning`
   // item type; clients render it as thinking segments, never as tool rows.
   const isReasoningSegment = isReasoningItemPayload(payload);
+  // Provider reasoning text is opaque — do not run command-output stripping.
+  const detail = isReasoningSegment
+    ? typeof payload?.detail === "string" && payload.detail.length > 0
+      ? payload.detail
+      : null
+    : isTaskActivity
+      ? !taskDetailAsLabel &&
+        payload &&
+        typeof payload.detail === "string" &&
+        payload.detail.length > 0
+        ? stripTrailingExitCode(payload.detail).output
+        : null
+      : extractToolDetail(payload, title ?? activity.summary);
+  const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
@@ -839,7 +844,14 @@ function shouldCollapseToolLifecycleEntries(
     return false;
   }
   if (previous.sourceActivityKind === "tool.completed") {
-    return false;
+    // Allow corrective reasoning completions (OpenCode can edit a finished
+    // reasoning part on reconnect) to refresh terminal detail in place.
+    return (
+      isReasoningSegmentEntry(previous) &&
+      isReasoningSegmentEntry(next) &&
+      previous.toolCallId !== undefined &&
+      previous.toolCallId === next.toolCallId
+    );
   }
   if (
     previous[workLogCollapseKey] !== undefined &&
@@ -861,7 +873,18 @@ function mergeDerivedWorkLogEntries(
   next: DerivedWorkLogEntry,
 ): DerivedWorkLogEntry {
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
-  const detail = next.detail ?? previous.detail;
+  // OpenCode streams inProgress reasoning detail as incremental chunks.
+  // Concatenate those; completions (and corrective edits) replace with the
+  // full terminal body.
+  const reasoningMerge = isReasoningSegmentEntry(previous) && isReasoningSegmentEntry(next);
+  const detail =
+    reasoningMerge &&
+    previous.toolLifecycleStatus === "inProgress" &&
+    next.toolLifecycleStatus === "inProgress" &&
+    previous.detail !== undefined &&
+    next.detail !== undefined
+      ? `${previous.detail}${next.detail}`
+      : (next.detail ?? previous.detail);
   const viewedImagePath = next.viewedImagePath ?? previous.viewedImagePath;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
@@ -881,12 +904,13 @@ function mergeDerivedWorkLogEntries(
   const segmentStartedAt =
     next.segmentStartedAt ??
     previous.segmentStartedAt ??
-    (isReasoningSegmentEntry(previous) && isReasoningSegmentEntry(next)
-      ? previous.createdAt
-      : undefined);
+    (reasoningMerge ? previous.createdAt : undefined);
   return {
     ...previous,
     ...next,
+    // Keep a stable id across reasoning merges so list virtualization does
+    // not remount the Markdown row on every incremental chunk.
+    ...(reasoningMerge ? { id: previous.id } : {}),
     ...(detail ? { detail } : {}),
     ...(viewedImagePath ? { viewedImagePath } : {}),
     ...(command ? { command } : {}),

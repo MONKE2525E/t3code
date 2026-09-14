@@ -849,12 +849,15 @@ export function runtimeEventToActivities(
 
     case "item.updated": {
       // Reasoning items project like tools so clients can render thinking
-      // segments as activity boundaries. When an adapter supplies provider
-      // reasoning text on lifecycle `detail`, preserve it (content.delta
-      // reasoning_text is still dropped above; detail is the carrier).
+      // segments as activity boundaries. Require lifecycle status so status-less
+      // provider updates (e.g. Codex summaryPartAdded) do not become stray
+      // Thought rows. When an adapter supplies provider reasoning text on
+      // lifecycle `detail`, preserve it (content.delta reasoning_text is still
+      // dropped above; detail is the carrier). OpenCode streams growth as
+      // incremental detail chunks; clients concatenate inProgress updates.
       if (
         !isToolLifecycleItemType(event.payload.itemType) &&
-        event.payload.itemType !== "reasoning"
+        !(event.payload.itemType === "reasoning" && event.payload.status !== undefined)
       ) {
         return [];
       }
@@ -902,9 +905,10 @@ export function runtimeEventToActivities(
 
     case "item.completed": {
       // See item.updated above: reasoning lifecycle becomes thinking activity.
+      // Require status so only true lifecycle completions project.
       if (
         !isToolLifecycleItemType(event.payload.itemType) &&
-        event.payload.itemType !== "reasoning"
+        !(event.payload.itemType === "reasoning" && event.payload.status !== undefined)
       ) {
         return [];
       }

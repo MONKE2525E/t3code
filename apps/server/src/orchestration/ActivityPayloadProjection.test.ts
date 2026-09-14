@@ -407,12 +407,12 @@ describe("projectThreadDetailSnapshot reasoning retention", () => {
   });
 
   it("drops intermediate reasoning text copies while keeping start timing and final text", () => {
+    // Incremental chunks (the live/write path), not cumulative prefixes.
     const chunks = Array.from({ length: 40 }, (_, index) => `word${index} `);
-    const growing = chunks.map((_, index) => chunks.slice(0, index + 1).join(""));
-    const finalText = growing[growing.length - 1]!;
+    const finalText = chunks.join("");
     expect(finalText.length).toBeGreaterThan(180);
 
-    const activities: OrchestrationThreadActivity[] = growing.map((detail, index) => {
+    const activities: OrchestrationThreadActivity[] = chunks.map((detail, index) => {
       const row = lifecycleActivity(
         `reasoning-updated-${index}`,
         "tool.updated",
@@ -428,6 +428,15 @@ describe("projectThreadDetailSnapshot reasoning retention", () => {
         },
       } as OrchestrationThreadActivity;
     });
+    // Live/persist path proof: 40 incremental chunks stay O(N) bytes total,
+    // not O(N²) cumulative prefixes.
+    const persistedDetailBytes = activities.reduce((total, activity) => {
+      const detail = (activity.payload as Record<string, unknown>).detail;
+      return total + (typeof detail === "string" ? detail.length : 0);
+    }, 0);
+    expect(persistedDetailBytes).toBe(finalText.length);
+    expect(persistedDetailBytes).toBeLessThan(finalText.length * 2);
+
     activities.push({
       ...lifecycleActivity(
         "reasoning-completed",
@@ -458,7 +467,7 @@ describe("projectThreadDetailSnapshot reasoning retention", () => {
     const completed = projected.thread.activities[1]!;
     expect((start.payload as Record<string, unknown>).detail).toBeUndefined();
     expect((completed.payload as Record<string, unknown>).detail).toBe(finalText);
-    // Snapshot stores O(1) bodies, not every cumulative prefix.
+    // Snapshot stores O(1) bodies, not every streaming chunk.
     const detailBytes = projected.thread.activities.reduce((total, activity) => {
       const detail = (activity.payload as Record<string, unknown>).detail;
       return total + (typeof detail === "string" ? detail.length : 0);
@@ -467,7 +476,9 @@ describe("projectThreadDetailSnapshot reasoning retention", () => {
   });
 
   it("keeps first and latest in-flight reasoning updates across distinct createdAt values", () => {
-    const activities = [1, 2, 3, 4, 5].map((n) => {
+    const chunks = ["partial-", "one-", "two-", "three-", "four"];
+    const activities = chunks.map((detail, index) => {
+      const n = index + 1;
       const row = lifecycleActivity(
         `reasoning-updated-${n}`,
         "tool.updated",
@@ -479,7 +490,7 @@ describe("projectThreadDetailSnapshot reasoning retention", () => {
         ...row,
         payload: {
           ...(row.payload as Record<string, unknown>),
-          detail: `partial-${n}`,
+          detail,
         },
       } as OrchestrationThreadActivity;
     });
@@ -498,8 +509,9 @@ describe("projectThreadDetailSnapshot reasoning retention", () => {
       (projected.thread.activities[0]?.payload as Record<string, unknown>).detail,
     ).toBeUndefined();
     expect(projected.thread.activities[1]?.createdAt).toBe("2026-08-01T10:00:05.000Z");
+    // Latest retained row reconstructs the full concatenated body from chunks.
     expect((projected.thread.activities[1]?.payload as Record<string, unknown>).detail).toBe(
-      "partial-5",
+      chunks.join(""),
     );
   });
 

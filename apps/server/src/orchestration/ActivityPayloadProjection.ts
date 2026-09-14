@@ -642,11 +642,13 @@ function dropSupersededToolUpdatedActivities(
 
   // Completed thoughts: first update (start timing, no partial detail) +
   // completion (final text). In-flight thoughts: first update (start timing,
-  // no partial detail) + latest update (current text). If first === latest,
-  // keep that single update with its detail. Intermediate streaming updates
-  // are dropped from snapshots (live clients already received them as appends).
+  // no partial detail) + latest update with reconstructed full text (OpenCode
+  // streams incremental detail chunks). If first === latest, keep that single
+  // update with its detail. Intermediate streaming updates are dropped from
+  // snapshots (live clients already received them as appends).
   const retainedReasoningUpdateIndices = new Set<number>();
   const stripDetailFromReasoningUpdateIndices = new Set<number>();
+  const reconstructedReasoningDetailByIndex = new Map<number, string>();
   for (const [key, updateIndices] of updateIndicesByKey) {
     const firstUpdate = updateIndices[0];
     const lastUpdate = updateIndices[updateIndices.length - 1];
@@ -667,6 +669,15 @@ function dropSupersededToolUpdatedActivities(
     if (lastUpdate !== firstUpdate) {
       retainedReasoningUpdateIndices.add(lastUpdate);
       stripDetailFromReasoningUpdateIndices.add(firstUpdate);
+      const reconstructed = updateIndices
+        .map((updateIndex) => {
+          const detail = asRecord(activities[updateIndex]?.payload)?.detail;
+          return typeof detail === "string" ? detail : "";
+        })
+        .join("");
+      if (reconstructed.trim().length > 0) {
+        reconstructedReasoningDetailByIndex.set(lastUpdate, reconstructed);
+      }
     }
   }
 
@@ -682,6 +693,11 @@ function dropSupersededToolUpdatedActivities(
     if (asRecord(activity.payload)?.itemType === "reasoning") {
       if (!retainedReasoningUpdateIndices.has(index)) {
         return [];
+      }
+      const reconstructed = reconstructedReasoningDetailByIndex.get(index);
+      if (reconstructed !== undefined) {
+        const payload = asRecord(activity.payload) ?? {};
+        return [{ ...activity, payload: { ...payload, detail: reconstructed } }];
       }
       if (!stripDetailFromReasoningUpdateIndices.has(index)) {
         return [activity];

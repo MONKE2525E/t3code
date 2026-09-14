@@ -255,4 +255,31 @@ describe("runtimeEventToActivities reasoning lifecycle", () => {
       ).toEqual([]);
     }
   });
+
+  it("drops status-less Codex-style reasoning updates so timelines stay unchanged", () => {
+    // Codex summaryPartAdded emits itemType reasoning without lifecycle status.
+    expect(
+      runtimeEventToActivities({
+        ...reasoningUpdated,
+        provider: ProviderDriverKind.make("codex"),
+        eventId: EventId.make("evt-codex-reasoning"),
+        payload: {
+          itemType: "reasoning",
+          data: { text: "summary part" },
+        },
+      }),
+    ).toEqual([]);
+    expect(
+      runtimeEventToActivities({
+        ...reasoningUpdated,
+        provider: ProviderDriverKind.make("codex"),
+        type: "item.completed",
+        eventId: EventId.make("evt-codex-reasoning-completed"),
+        payload: {
+          itemType: "reasoning",
+          data: { text: "summary part" },
+        },
+      }),
+    ).toEqual([]);
+  });
 });

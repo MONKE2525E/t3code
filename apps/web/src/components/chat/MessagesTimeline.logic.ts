@@ -1246,9 +1246,15 @@ export function deriveMessagesTimelineRows(input: {
             const text = entry.detail?.trim() ?? "";
             const isLive = liveEntry !== undefined && entry.id === liveEntry.id;
             if (reasoningHasVisibleText(entry) && text.length > 0) {
+              // Stable across streaming lifecycle merges: turn + reasoning identity,
+              // not the transient activity/event id that changes on every update.
+              const reasoningIdentity =
+                entry.toolCallId !== undefined
+                  ? `${entry.turnId ?? timelineEntry.id}:${entry.toolCallId}`
+                  : `${timelineEntry.id}:${entry.id}`;
               nextRows.push({
                 kind: "reasoning-markdown",
-                id: `reasoning-markdown:${timelineEntry.id}:${entry.id}`,
+                id: `reasoning-markdown:${reasoningIdentity}`,
                 createdAt: span.startedAt ?? entry.createdAt,
                 text,
                 streaming: isLive,

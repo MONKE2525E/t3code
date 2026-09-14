@@ -3597,6 +3597,85 @@ describe("reasoning segments", () => {
     ).toBe(false);
   });
 
+  it("keeps a stable reasoning-markdown row id across streaming updates", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const present = (activities: ReturnType<typeof thinkingActivity>[]) => {
+      const thread = makeThread({
+        id: ThreadId.make("segment-stable-id"),
+        projectId: ProjectId.make("project-1"),
+        title: "Stable id",
+        latestTurn: runningTurn,
+        activities,
+      });
+      return deriveThreadFeedPresentation(
+        buildThreadFeed(thread),
+        runningTurn,
+        new Set([turnId]),
+        new Set(),
+        at(0),
+      );
+    };
+    const first = present([
+      {
+        ...thinkingActivity("thought-1-a", "tool.updated", 1, "thought-1"),
+        payload: {
+          itemType: "reasoning",
+          toolCallId: "thought-1",
+          status: "inProgress",
+          title: "Thinking",
+          detail: "Start",
+        },
+      },
+    ]);
+    const second = present([
+      {
+        ...thinkingActivity("thought-1-a", "tool.updated", 1, "thought-1"),
+        payload: {
+          itemType: "reasoning",
+          toolCallId: "thought-1",
+          status: "inProgress",
+          title: "Thinking",
+          detail: "Start",
+        },
+      },
+      {
+        ...thinkingActivity("thought-1-b", "tool.updated", 2, "thought-1"),
+        payload: {
+          itemType: "reasoning",
+          toolCallId: "thought-1",
+          status: "inProgress",
+          title: "Thinking",
+          detail: " middle",
+        },
+      },
+      {
+        ...thinkingActivity("thought-1-c", "tool.updated", 3, "thought-1"),
+        payload: {
+          itemType: "reasoning",
+          toolCallId: "thought-1",
+          status: "inProgress",
+          title: "Thinking",
+          detail: " end",
+        },
+      },
+    ]);
+    const firstRow = first.find((row) => row.type === "reasoning-markdown");
+    const secondRow = second.find((row) => row.type === "reasoning-markdown");
+    expect(firstRow).toMatchObject({
+      type: "reasoning-markdown",
+      id: `reasoning-markdown:${turnId}:thought-1`,
+      text: "Start",
+      streaming: true,
+    });
+    expect(secondRow).toMatchObject({
+      type: "reasoning-markdown",
+      id: `reasoning-markdown:${turnId}:thought-1`,
+      text: "Start middle end",
+      streaming: true,
+    });
+    expect(secondRow?.id).toBe(firstRow?.id);
+  });
+
   it("keeps settled history monotonic while the live tail alternates", () => {
     const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
     const commentary = {

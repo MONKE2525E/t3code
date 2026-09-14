@@ -3535,6 +3535,50 @@ describe("reasoning segments", () => {
     );
   });
 
+  it("keeps a stable reasoning-markdown row id across streaming updates", () => {
+    const withDetail = (
+      activity: OrchestrationThreadActivity,
+      detail: string,
+    ): OrchestrationThreadActivity =>
+      ({
+        ...activity,
+        payload: {
+          ...(activity.payload as Record<string, unknown>),
+          detail,
+        },
+      }) as OrchestrationThreadActivity;
+    const rowsFor = (activities: OrchestrationThreadActivity[]) =>
+      deriveMessagesTimelineRows(
+        liveInput(
+          [userMessage, assistantMessage("live-commentary", 8, true)],
+          deriveWorkLogEntries(activities),
+        ),
+      );
+    const first = rowsFor([
+      withDetail(thinkingActivity("thought-1-a", "tool.updated", 1, "thought-1"), "Start"),
+    ]);
+    const second = rowsFor([
+      withDetail(thinkingActivity("thought-1-a", "tool.updated", 1, "thought-1"), "Start"),
+      withDetail(thinkingActivity("thought-1-b", "tool.updated", 2, "thought-1"), " middle"),
+      withDetail(thinkingActivity("thought-1-c", "tool.updated", 3, "thought-1"), " end"),
+    ]);
+    const firstRow = first.find((row) => row.kind === "reasoning-markdown");
+    const secondRow = second.find((row) => row.kind === "reasoning-markdown");
+    expect(firstRow).toMatchObject({
+      kind: "reasoning-markdown",
+      id: `reasoning-markdown:${turnId}:thought-1`,
+      text: "Start",
+      streaming: true,
+    });
+    expect(secondRow).toMatchObject({
+      kind: "reasoning-markdown",
+      id: `reasoning-markdown:${turnId}:thought-1`,
+      text: "Start middle end",
+      streaming: true,
+    });
+    expect(secondRow?.id).toBe(firstRow?.id);
+  });
+
   it("folds text-bearing reasoning into one Worked-for turn fold when settled", () => {
     const text =
       "The user wants to know their opencode version. I should run the command to check.";
