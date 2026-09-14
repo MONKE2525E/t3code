@@ -1411,13 +1411,12 @@ function renderFeedEntry(
   }
 
   if (entry.type === "reasoning-markdown") {
-    const styles = props.markdownStyles;
     return (
       <View className="mb-2 px-1 opacity-70">
         <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
           <AssistantMarkdownContent
             markdown={entry.text}
-            markdownStyles={styles}
+            markdownStyles={markdownStyles.assistant}
             linkHandlers={props.markdownLinkHandlers}
             onUseArtifactTemplate={props.onUseArtifactTemplate}
             renderImage={props.renderMarkdownImage}
