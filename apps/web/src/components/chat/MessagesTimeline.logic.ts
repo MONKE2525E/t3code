@@ -8,6 +8,7 @@ import {
   omitSupersededLifecycleMarkers,
   formatThinkingSegmentLabel,
   isReasoningSegmentEntry,
+  reasoningHasVisibleText,
   reasoningSegmentSpanForEntry,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
@@ -58,7 +59,9 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   const toolPresentation = resolveWorkEntryToolPresentation(entry);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command) return entry.command;
-  if (entry.detail) return entry.detail;
+  // Readable reasoning uses reasoning-markdown rows; never promote detail to
+  // the Thought/tool label.
+  if (entry.detail && !isReasoningSegmentEntry(entry)) return entry.detail;
   const [firstPath] = entry.changedFiles ?? [];
   if (firstPath) {
     const path = formatWorkspaceRelativePath(firstPath, workspaceRoot);
@@ -75,6 +78,11 @@ export function liveWorkEntryLabel(
   workspaceRoot: string | undefined,
   active: boolean,
 ) {
+  // Structural thoughts stay labeled "Thinking"; readable text uses the
+  // reasoning-markdown row instead of this label path.
+  if (isReasoningSegmentEntry(entry)) {
+    return "Thinking";
+  }
   const status = liveActivityToolStatus(entry.toolLifecycleStatus, active);
   const toolPresentation = resolveWorkEntryToolPresentation({
     ...entry,
@@ -403,6 +411,17 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string | null;
       snapshot: WorktreeSetupSnapshot;
+    }
+  | {
+      /**
+       * Provider-supplied readable reasoning rendered as chronological
+       * Markdown (Codex-style), not a Thought-for-Xs accordion.
+       */
+      kind: "reasoning-markdown";
+      id: string;
+      createdAt: string;
+      text: string;
+      streaming: boolean;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -1216,41 +1235,54 @@ export function deriveMessagesTimelineRows(input: {
         } else if (visibleGroupedEntries.every(isReasoningSegmentEntry)) {
           // One live thought per turn at most: the designated open segment
           // animates while every other thought renders statically beside it.
+          // Text-bearing segments render as chronological Markdown (no Thought
+          // accordion). Boundary-only segments keep Thinking / Thought for Xs.
           const liveEntry =
             activeWorkRow?.active === true
               ? undefined
               : visibleGroupedEntries.find((entry) => entry.id === liveReasoningWorkEntryId);
-          if (liveEntry !== undefined) {
-            const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
-            const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
-            nextRows.push({
-              kind: "work-live",
-              id: `work-live:${workGroupIdentity(timelineEntry.id, timelineEntry.entry)}`,
-              createdAt: timelineEntry.createdAt,
-              entry: liveEntry,
-              groupedEntries: visibleGroupedEntries,
-              groupId,
-              expanded,
-              active: true,
-            });
-            hasActivityRow = true;
-            if (expanded) {
-              nextRows.push(
-                expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),
-              );
-            }
-          } else {
-            for (const entry of visibleGroupedEntries) {
-              const span = reasoningSegmentSpanForEntry(entry);
+          for (const entry of visibleGroupedEntries) {
+            const span = reasoningSegmentSpanForEntry(entry);
+            const text = entry.detail?.trim() ?? "";
+            const isLive = liveEntry !== undefined && entry.id === liveEntry.id;
+            if (reasoningHasVisibleText(entry) && text.length > 0) {
               nextRows.push({
-                kind: "work",
-                id: `thinking-segment:${timelineEntry.id}:${entry.id}`,
+                kind: "reasoning-markdown",
+                id: `reasoning-markdown:${timelineEntry.id}:${entry.id}`,
                 createdAt: span.startedAt ?? entry.createdAt,
-                groupedEntries: [entry],
-                isExpandedToolGroup: false,
-                displayLabel: formatThinkingSegmentLabel(span),
+                text,
+                streaming: isLive,
               });
+              if (isLive) {
+                hasActivityRow = true;
+              }
+              continue;
             }
+            if (isLive) {
+              const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
+              nextRows.push({
+                kind: "work-live",
+                id: `work-live:${workGroupIdentity(timelineEntry.id, timelineEntry.entry)}`,
+                createdAt: timelineEntry.createdAt,
+                entry: liveEntry!,
+                groupedEntries: visibleGroupedEntries.filter(
+                  (candidate) => candidate.id === entry.id,
+                ),
+                groupId,
+                expanded: false,
+                active: true,
+              });
+              hasActivityRow = true;
+              continue;
+            }
+            nextRows.push({
+              kind: "work",
+              id: `thinking-segment:${timelineEntry.id}:${entry.id}`,
+              createdAt: span.startedAt ?? entry.createdAt,
+              groupedEntries: [entry],
+              isExpandedToolGroup: false,
+              displayLabel: formatThinkingSegmentLabel(span),
+            });
           }
         } else if (
           visibleGroupedEntries.length === 1 &&
@@ -1521,6 +1553,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.createdAt === (b as typeof a).createdAt;
     case "worktree-setup":
       return a.snapshot === (b as typeof a).snapshot;
+
+    case "reasoning-markdown": {
+      const br = b as typeof a;
+      return a.createdAt === br.createdAt && a.text === br.text && a.streaming === br.streaming;
+    }
 
     case "assistant-meta": {
       const bm = b as typeof a;

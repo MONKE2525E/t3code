@@ -389,6 +389,13 @@ export function isReasoningSegmentEntry(
   );
 }
 
+/** Provider-supplied readable reasoning body (not fabricated, not structural-only). */
+export function reasoningHasVisibleText(
+  entry: Pick<WorkLogPresentationEntry, "tone" | "sourceActivityKind" | "detail">,
+): boolean {
+  return isReasoningSegmentEntry(entry) && Boolean(entry.detail?.trim());
+}
+
 export interface ReasoningSegmentSpan {
   /** Segment start: native thinking start when observed, else first sighting. */
   readonly startedAt: string | null;

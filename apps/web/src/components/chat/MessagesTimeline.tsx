@@ -1409,7 +1409,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                   row.kind === "work-live" ||
                   row.kind === "work-toggle" ||
                   row.kind === "thinking" ||
-                  row.kind === "worktree-setup"
+                  row.kind === "worktree-setup" ||
+                  row.kind === "reasoning-markdown"
                 ? "pb-2"
                 : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
@@ -1445,6 +1446,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "thinking" ? <ThinkingTimelineRow /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
+      {row.kind === "reasoning-markdown" ? <ReasoningMarkdownTimelineRow row={row} /> : null}
     </div>
   );
 });
@@ -2487,49 +2489,63 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
   }
   const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
-  const thinkingText =
-    row.entry.tone === "thinking" ? row.entry.detail?.trim() || undefined : undefined;
 
   return (
-    <div className="flex w-full max-w-full flex-col">
-      <button
-        type="button"
-        className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-        aria-label={failed ? `${label}, tool call failed` : undefined}
-        aria-expanded={row.expanded}
-        onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
-      >
-        <LiveActivityRow
-          label={
-            row.entry.questionAnswer ? (
-              <span className="flex min-w-0 gap-1.5">
-                <span className="shrink-0">{label}</span>
-                <span
-                  className={cn(
-                    "truncate",
-                    !row.expanded && hasQuestionAnswer(row.entry.questionAnswer)
-                      ? "text-foreground"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {getQuestionAnswerPreview(row.entry.questionAnswer)}
-                </span>
+    <button
+      type="button"
+      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      aria-label={failed ? `${label}, tool call failed` : undefined}
+      aria-expanded={row.expanded}
+      onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+    >
+      <LiveActivityRow
+        label={
+          row.entry.questionAnswer ? (
+            <span className="flex min-w-0 gap-1.5">
+              <span className="shrink-0">{label}</span>
+              <span
+                className={cn(
+                  "truncate",
+                  !row.expanded && hasQuestionAnswer(row.entry.questionAnswer)
+                    ? "text-foreground"
+                    : "text-muted-foreground",
+                )}
+              >
+                {getQuestionAnswerPreview(row.entry.questionAnswer)}
               </span>
-            ) : (
-              label
-            )
-          }
-          iconName={workEntryIconName(row.entry)}
-          toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
-          failed={failed}
-          active={row.active}
-        />
-      </button>
-      {thinkingText ? (
-        <div className="ms-7 mt-1 rounded-md bg-muted/40 px-3 py-2">
-          <pre className={toolCallExpandedBodyClassName}>{thinkingText}</pre>
-        </div>
-      ) : null}
+            </span>
+          ) : (
+            label
+          )
+        }
+        iconName={workEntryIconName(row.entry)}
+        toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
+        failed={failed}
+        active={row.active}
+      />
+    </button>
+  );
+}
+
+function ReasoningMarkdownTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "reasoning-markdown" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <div className="relative min-w-0 px-1 py-0.5 text-muted-foreground">
+      <ChatMarkdown
+        text={row.text}
+        cwd={ctx.markdownCwd}
+        threadRef={ctx.threadRef ?? undefined}
+        isStreaming={row.streaming}
+        lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}
+        skills={ctx.skills}
+        headingLevelOffset={MESSAGE_HEADING_LEVEL}
+        onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+        onImageExpand={ctx.onImageExpand}
+      />
     </div>
   );
 }
@@ -4046,21 +4062,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
   const { threadRef, onImageExpand } = use(TimelineRowCtx);
   const groupView = use(WorkGroupViewCtx);
-  const thinkingText = workEntry.tone === "thinking" ? workEntry.detail?.trim() : undefined;
-  // Codex shows readable thought text inline under the Thought label. Default
-  // open when provider text exists; the user can still collapse it.
   const [expanded, setExpanded] = useState(
-    () => Boolean(thinkingText) || (groupView?.state.expandedEntries.has(workEntry.id) ?? false),
+    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
-  const hadThinkingTextRef = useRef(Boolean(thinkingText));
-  useEffect(() => {
-    const hasText = Boolean(thinkingText);
-    if (hasText && !hadThinkingTextRef.current) {
-      setExpanded(true);
-      groupView?.state.expandedEntries.add(workEntry.id);
-    }
-    hadThinkingTextRef.current = hasText;
-  }, [groupView, thinkingText, workEntry.id]);
   const toggleExpanded = () => {
     const next = !expanded;
     if (groupView) {

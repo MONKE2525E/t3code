@@ -26,6 +26,7 @@ import {
   liveActivityToolStatus,
   normalizeCompactToolLabel,
   omitSupersededLifecycleMarkers,
+  reasoningHasVisibleText,
   reasoningSegmentSpanForEntry,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
@@ -202,6 +203,15 @@ export type ThreadFeedEntry =
       readonly id: string;
       readonly createdAt: string;
       readonly turnId: TurnId | null;
+    }
+  | {
+      /** Provider-supplied readable reasoning as chronological Markdown. */
+      readonly type: "reasoning-markdown";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly turnId: TurnId | null;
+      readonly text: string;
+      readonly streaming: boolean;
     }
   | {
       /**
@@ -1773,6 +1783,7 @@ export function deriveThreadFeedPresentation(
       entry.type !== "turn-fold" &&
       entry.type !== "work-toggle" &&
       entry.type !== "thinking" &&
+      entry.type !== "reasoning-markdown" &&
       entry.type !== "agent-spawn",
   );
   const activeTailGroup = sourceFeed.findLast(
@@ -1948,7 +1959,17 @@ function designateLiveThinkingScope(
 
 function appendPresentedFeedEntry(
   result: ThreadFeedEntry[],
-  entry: Exclude<ThreadFeedEntry, { readonly type: "turn-fold" | "work-toggle" | "thinking" }>,
+  entry: Exclude<
+    ThreadFeedEntry,
+    {
+      readonly type:
+        | "turn-fold"
+        | "work-toggle"
+        | "thinking"
+        | "reasoning-markdown"
+        | "agent-spawn";
+    }
+  >,
   expandedWorkGroupIds: ReadonlySet<string>,
   unsettledTurnId: TurnId | null,
   isWorking: boolean,
@@ -2233,9 +2254,18 @@ function appendThinkingSegmentRows(
       activity.id === thinkingLive.designatedThinkingActivityId &&
       !thinkingLive.hasLiveToolActivity;
     const shimmer = live;
-    // Match web/Codex: provider reasoning text is visible under the Thought
-    // label by default, not hidden behind a closed disclosure.
-    const showBody = expanded || Boolean(entry.detail?.trim());
+    const text = entry.detail?.trim() ?? "";
+    if (reasoningHasVisibleText(entry) && text.length > 0) {
+      result.push({
+        type: "reasoning-markdown",
+        id: `reasoning-markdown:${groupId}:${activity.id}`,
+        createdAt: span.startedAt ?? activity.createdAt,
+        turnId: sourceGroup.turnId,
+        text,
+        streaming: live,
+      });
+      continue;
+    }
     result.push({
       type: "work-toggle",
       // The shimmering row is the turn's live slot; it keeps that identity
@@ -2245,14 +2275,14 @@ function appendThinkingSegmentRows(
       turnId: sourceGroup.turnId,
       groupId,
       hiddenCount: 1,
-      expanded: showBody,
+      expanded,
       summary: live ? "Thinking" : formatThinkingSegmentLabel(span),
       summaryKind: toolGroupSummaryKind([entry]),
       hasFailure: false,
       live,
       shimmer,
     });
-    if (!showBody) {
+    if (!expanded) {
       continue;
     }
     result.push({

@@ -3483,6 +3483,135 @@ describe("reasoning segments", () => {
     ).toEqual(["Thought for 4.0s", "Ran 3 commands", "Thought for 7.0s", "Ran 2 commands"]);
   });
 
+  it("renders text-bearing reasoning as inline markdown between tools while live", () => {
+    const textA = "The user wants to know their opencode version.";
+    const textB = "I should run the command to check.";
+    const withDetail = (
+      activity: OrchestrationThreadActivity,
+      detail: string,
+    ): OrchestrationThreadActivity =>
+      ({
+        ...activity,
+        payload: {
+          ...(activity.payload as Record<string, unknown>),
+          detail,
+        },
+      }) as OrchestrationThreadActivity;
+    const work = deriveWorkLogEntries([
+      withDetail(thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"), textA),
+      withDetail(thinkingActivity("thought-1-completed", "tool.completed", 4, "thought-1"), textA),
+      toolActivity("tool-1", 5),
+      toolActivity("tool-2", 6),
+      withDetail(thinkingActivity("thought-2-updated", "tool.updated", 7, "thought-2"), textB),
+    ]);
+    const rows = deriveMessagesTimelineRows(
+      liveInput([userMessage, assistantMessage("live-commentary", 8, true)], work),
+    );
+
+    expect(
+      rows
+        .filter(
+          (row) =>
+            row.kind === "reasoning-markdown" ||
+            row.kind === "work" ||
+            row.kind === "work-toggle" ||
+            row.kind === "work-live",
+        )
+        .map((row) => {
+          if (row.kind === "reasoning-markdown") {
+            return { kind: row.kind, text: row.text, streaming: row.streaming };
+          }
+          if (row.kind === "work") return { kind: row.kind, label: row.displayLabel };
+          if (row.kind === "work-toggle") return { kind: row.kind, label: row.summary };
+          return { kind: row.kind, label: "live" };
+        }),
+    ).toEqual([
+      { kind: "reasoning-markdown", text: textA, streaming: false },
+      { kind: "work-toggle", label: "Ran 2 commands" },
+      { kind: "reasoning-markdown", text: textB, streaming: true },
+    ]);
+    expect(rows.some((row) => row.kind === "work" && row.displayLabel?.startsWith("Thought"))).toBe(
+      false,
+    );
+  });
+
+  it("folds text-bearing reasoning into one Worked-for turn fold when settled", () => {
+    const text =
+      "The user wants to know their opencode version. I should run the command to check.";
+    const withDetail = (
+      activity: OrchestrationThreadActivity,
+      detail: string,
+    ): OrchestrationThreadActivity =>
+      ({
+        ...activity,
+        payload: {
+          ...(activity.payload as Record<string, unknown>),
+          detail,
+        },
+      }) as OrchestrationThreadActivity;
+    const work = deriveWorkLogEntries([
+      withDetail(thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"), text),
+      withDetail(thinkingActivity("thought-1-completed", "tool.completed", 4, "thought-1"), text),
+      toolActivity("tool-1", 5),
+      toolActivity("tool-2", 6),
+      withDetail(
+        thinkingActivity("thought-2-updated", "tool.updated", 7, "thought-2"),
+        "Next step.",
+      ),
+      withDetail(
+        thinkingActivity("thought-2-completed", "tool.completed", 10, "thought-2"),
+        "Next step.",
+      ),
+    ]);
+    const terminal = assistantMessage("segment-final", 12);
+    const timelineEntries = deriveTimelineEntries([userMessage, terminal], [], work);
+    const collapsed = deriveMessagesTimelineRows({
+      timelineEntries,
+      latestTurn: {
+        turnId,
+        state: "completed",
+        startedAt: time(0),
+        completedAt: time(12),
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(collapsed.filter((row) => row.kind === "turn-fold")).toHaveLength(1);
+    expect(collapsed.find((row) => row.kind === "turn-fold")).toMatchObject({
+      kind: "turn-fold",
+      label: expect.stringMatching(/^Worked for /),
+    });
+    expect(collapsed.some((row) => row.kind === "reasoning-markdown")).toBe(false);
+
+    const expanded = deriveMessagesTimelineRows({
+      timelineEntries,
+      latestTurn: {
+        turnId,
+        state: "completed",
+        startedAt: time(0),
+        completedAt: time(12),
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      expandedTurnIds: new Set([turnId]),
+    });
+    expect(
+      expanded
+        .filter((row) => row.kind === "reasoning-markdown" || row.kind === "work-toggle")
+        .map((row) =>
+          row.kind === "reasoning-markdown"
+            ? row.text
+            : row.kind === "work-toggle"
+              ? row.summary
+              : null,
+        ),
+    ).toEqual([text, "Ran 2 commands", "Next step."]);
+  });
+
   it("keeps settled history monotonic while the live tail alternates", () => {
     const commentary = assistantMessage("commentary", 3);
     const steps: OrchestrationThreadActivity[] = [
