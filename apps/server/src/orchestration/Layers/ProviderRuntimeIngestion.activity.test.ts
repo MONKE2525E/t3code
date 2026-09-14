@@ -176,6 +176,43 @@ describe("runtimeEventToActivities reasoning lifecycle", () => {
     expect(payload).not.toHaveProperty("detail");
   });
 
+  it("preserves provider reasoning text on lifecycle detail without truncating it", () => {
+    const longDetail = `${"The user wants to know their opencode version. ".repeat(8)}I should run the command.`;
+    expect(longDetail.length).toBeGreaterThan(180);
+
+    const updated = runtimeEventToActivities({
+      ...reasoningUpdated,
+      payload: {
+        itemType: "reasoning",
+        status: "inProgress",
+        title: "Thinking",
+        detail: longDetail,
+      },
+    });
+    expect(updated[0]?.payload).toMatchObject({
+      itemType: "reasoning",
+      detail: longDetail,
+    });
+
+    const completed = runtimeEventToActivities({
+      ...reasoningUpdated,
+      type: "item.completed",
+      eventId: EventId.make("evt-reasoning-completed-text"),
+      createdAt: "2026-08-06T00:00:05.000Z",
+      payload: {
+        itemType: "reasoning",
+        status: "completed",
+        title: "Thinking",
+        detail: longDetail,
+      },
+    });
+    expect(completed[0]?.payload).toMatchObject({
+      itemType: "reasoning",
+      status: "completed",
+      detail: longDetail,
+    });
+  });
+
   it("projects reasoning completions with terminal status", () => {
     const activities = runtimeEventToActivities({
       ...reasoningUpdated,

@@ -2503,6 +2503,7 @@ describe("reasoning segment derivation", () => {
     id: string,
     kind: "tool.updated" | "tool.completed",
     createdAt: string,
+    extras?: { detail?: string },
   ) =>
     makeActivity({
       id,
@@ -2515,6 +2516,7 @@ describe("reasoning segment derivation", () => {
         toolCallId: "reasoning-1",
         status: kind === "tool.completed" ? "completed" : "inProgress",
         title: "Thinking",
+        ...(extras?.detail !== undefined ? { detail: extras.detail } : {}),
       },
     });
 
@@ -2533,8 +2535,32 @@ describe("reasoning segment derivation", () => {
       segmentStartedAt: "2026-02-23T00:00:01.000Z",
       createdAt: "2026-02-23T00:00:05.000Z",
     });
-    // No reasoning text may hitch a ride: labels and details stay structural.
+    // Empty/boundary-only reasoning stays structural — no fabricated body.
     expect(entries[0]?.detail).toBeUndefined();
+  });
+
+  it("keeps provider reasoning text on the merged thinking segment", () => {
+    const text =
+      "The user wants to know their opencode version. I should run the command to check.";
+    const entries = deriveWorkLogEntries([
+      reasoningActivity("reasoning-updated", "tool.updated", "2026-02-23T00:00:01.000Z", {
+        detail: "The user wants",
+      }),
+      reasoningActivity("reasoning-completed", "tool.completed", "2026-02-23T00:00:05.000Z", {
+        detail: text,
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      tone: "thinking",
+      label: "Thinking",
+      toolCallId: "reasoning-1",
+      toolLifecycleStatus: "completed",
+      segmentStartedAt: "2026-02-23T00:00:01.000Z",
+      createdAt: "2026-02-23T00:00:05.000Z",
+      detail: text,
+    });
   });
 
   it("pairs reasoning timing across interleaved tool activity", () => {

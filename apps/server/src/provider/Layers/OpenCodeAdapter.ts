@@ -606,6 +606,18 @@ function resolveTextStreamKind(part: Pick<Part, "type">): "assistant_text" | "re
   return part.type === "reasoning" ? "reasoning_text" : "assistant_text";
 }
 
+/** Provider-supplied reasoning body text only — never synthesize content. */
+function openCodeReasoningDetail(
+  part: Pick<OpenCodeTextPartState, "text" | "emittedText">,
+): string | undefined {
+  const text = part.emittedText ?? part.text;
+  if (text === undefined) {
+    return undefined;
+  }
+  const trimmed = text.trim();
+  return trimmed.length > 0 ? text : undefined;
+}
+
 function retainOpenCodeTextPart(
   context: OpenCodeSessionContext,
   part: OpenCodeTextPart,
@@ -1626,6 +1638,7 @@ export function makeOpenCodeAdapter(
         return;
       }
       state.completed = true;
+      const detail = openCodeReasoningDetail(state);
       yield* emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
@@ -1639,6 +1652,7 @@ export function makeOpenCodeAdapter(
           itemType: "reasoning",
           status: "completed",
           title: "Thinking",
+          ...(detail !== undefined ? { detail } : {}),
         },
       });
     });
@@ -1650,7 +1664,7 @@ export function makeOpenCodeAdapter(
       return yield* stopOpenCodeContext(context);
     });
 
-    /** Emit reasoning lifecycle (item.updated/item.completed) for a reasoning part. */
+    /** Start a reasoning lifecycle segment (completion happens after text merge). */
     const emitReasoningSegmentEvent = Effect.fn("emitReasoningSegmentEvent")(function* (
       context: OpenCodeSessionContext,
       part: OpenCodeTextPartState,
@@ -1660,14 +1674,18 @@ export function makeOpenCodeAdapter(
       if (part.type !== "reasoning") {
         return;
       }
-      // Lifecycle only, never text: reasoning content stays provider-private
-      // (see the reasoning_text drop in ProviderRuntimeIngestion). Native part
-      // identity and time metadata still give clients structural boundaries —
-      // thought/tool/thought — including for models with empty reasoning text.
+      // Capability-driven: native part identity/time always give structural
+      // thought/tool/thought boundaries. When the provider also supplies
+      // readable reasoning text, carry it on lifecycle `detail` so clients can
+      // render it through the existing work-entry path. Empty reasoning stays
+      // structural only — never fabricate text. (content.delta reasoning_text
+      // is still emitted for adapter parity, but ingestion drops non-assistant
+      // deltas; detail is the surviving carrier.)
       if (!part.reasoningStarted) {
         part.reasoningStarted = true;
         yield* completeOpenReasoningSegment(context, turnId, raw);
         context.openReasoningPart = { messageID: part.messageID, id: part.id };
+        const detail = openCodeReasoningDetail(part);
         yield* emit({
           ...(yield* buildEventBase({
             threadId: context.session.threadId,
@@ -1681,33 +1699,45 @@ export function makeOpenCodeAdapter(
             itemType: "reasoning",
             status: "inProgress",
             title: "Thinking",
+            ...(detail !== undefined ? { detail } : {}),
           },
         });
       }
-      if (part.time?.end !== undefined && !part.completed) {
-        part.completed = true;
-        if (
-          context.openReasoningPart?.messageID === part.messageID &&
-          context.openReasoningPart.id === part.id
-        ) {
-          context.openReasoningPart = undefined;
-        }
-        yield* emit({
-          ...(yield* buildEventBase({
-            threadId: context.session.threadId,
-            turnId,
-            itemId: part.id,
-            createdAt: isoFromEpochMs(part.time.end),
-            raw,
-          })),
-          type: "item.completed",
-          payload: {
-            itemType: "reasoning",
-            status: "completed",
-            title: "Thinking",
-          },
-        });
+    });
+
+    const completeReasoningSegmentPart = Effect.fn("completeReasoningSegmentPart")(function* (
+      context: OpenCodeSessionContext,
+      part: OpenCodeTextPartState,
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      if (part.type !== "reasoning" || part.completed || part.time?.end === undefined) {
+        return;
       }
+      part.completed = true;
+      if (
+        context.openReasoningPart?.messageID === part.messageID &&
+        context.openReasoningPart.id === part.id
+      ) {
+        context.openReasoningPart = undefined;
+      }
+      const detail = openCodeReasoningDetail(part);
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          itemId: part.id,
+          createdAt: isoFromEpochMs(part.time.end),
+          raw,
+        })),
+        type: "item.completed",
+        payload: {
+          itemType: "reasoning",
+          status: "completed",
+          title: "Thinking",
+          ...(detail !== undefined ? { detail } : {}),
+        },
+      });
     });
 
     /** Emit content.delta and item.completed events for an assistant text part. */
@@ -1717,8 +1747,11 @@ export function makeOpenCodeAdapter(
       turnId: TurnId | undefined,
       raw: unknown,
     ) {
+      const reasoningAlreadyStarted = part.reasoningStarted;
       yield* emitReasoningSegmentEvent(context, part, turnId, raw);
       if (part.text === undefined) {
+        // Native end can arrive without a new text body; still finalize.
+        yield* completeReasoningSegmentPart(context, part, turnId, raw);
         return;
       }
       const { latestText, deltaToEmit } = mergeOpenCodeAssistantText(part.emittedText, part.text);
@@ -1744,7 +1777,36 @@ export function makeOpenCodeAdapter(
             delta: deltaToEmit,
           },
         });
+        // Stream provider reasoning text onto the open thought item so clients
+        // can show growing detail without inventing a second channel. Skip the
+        // first sighting when emitReasoningSegmentEvent already carried detail.
+        if (
+          part.type === "reasoning" &&
+          !part.completed &&
+          latestText.trim().length > 0 &&
+          reasoningAlreadyStarted
+        ) {
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId,
+              itemId: part.id,
+              createdAt: part.time !== undefined ? isoFromEpochMs(part.time.start) : undefined,
+              raw,
+            })),
+            type: "item.updated",
+            payload: {
+              itemType: "reasoning",
+              status: "inProgress",
+              title: "Thinking",
+              detail: latestText,
+            },
+          });
+        }
       }
+
+      // Complete after merge so lifecycle detail has the latest provider text.
+      yield* completeReasoningSegmentPart(context, part, turnId, raw);
 
       if (part.type === "text" && part.time?.end !== undefined && !part.completed) {
         part.completed = true;

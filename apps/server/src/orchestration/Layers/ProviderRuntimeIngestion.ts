@@ -849,9 +849,9 @@ export function runtimeEventToActivities(
 
     case "item.updated": {
       // Reasoning items project like tools so clients can render thinking
-      // segments as activity boundaries. Reasoning text itself never arrives
-      // here (content.delta drops non-assistant text above), and adapters must
-      // not put it in lifecycle detail either.
+      // segments as activity boundaries. When an adapter supplies provider
+      // reasoning text on lifecycle `detail`, preserve it (content.delta
+      // reasoning_text is still dropped above; detail is the carrier).
       if (
         !isToolLifecycleItemType(event.payload.itemType) &&
         event.payload.itemType !== "reasoning"
@@ -865,6 +865,13 @@ export function runtimeEventToActivities(
       // needs it: ws.ts and http.ts apply `projectActivityPayload` before any
       // payload reaches a client. Persist the projected form for non-terminal
       // updates; `item.completed` below still persists the full payload.
+      // Reasoning detail is the visible thought body — do not truncate it.
+      const updatedDetail =
+        event.payload.detail === undefined
+          ? undefined
+          : event.payload.itemType === "reasoning"
+            ? event.payload.detail
+            : truncateDetail(event.payload.detail);
       return [
         projectActivityPayload({
           id: event.eventId,
@@ -877,7 +884,7 @@ export function runtimeEventToActivities(
             ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.title ? { title: event.payload.title } : {}),
-            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(updatedDetail !== undefined ? { detail: updatedDetail } : {}),
             ...(event.payload.toolSurface ? { toolSurface: event.payload.toolSurface } : {}),
             ...(event.payload.toolIcon ? { toolIcon: event.payload.toolIcon } : {}),
             ...(event.payload.toolSource ? { toolSource: event.payload.toolSource } : {}),
@@ -901,6 +908,12 @@ export function runtimeEventToActivities(
       ) {
         return [];
       }
+      const completedDetail =
+        event.payload.detail === undefined
+          ? undefined
+          : event.payload.itemType === "reasoning"
+            ? event.payload.detail
+            : truncateDetail(event.payload.detail);
       return [
         {
           id: event.eventId,
@@ -913,7 +926,7 @@ export function runtimeEventToActivities(
             ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.title ? { title: event.payload.title } : {}),
-            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(completedDetail !== undefined ? { detail: completedDetail } : {}),
             ...(event.payload.toolSurface ? { toolSurface: event.payload.toolSurface } : {}),
             ...(event.payload.toolIcon ? { toolIcon: event.payload.toolIcon } : {}),
             ...(event.payload.toolSource ? { toolSource: event.payload.toolSource } : {}),

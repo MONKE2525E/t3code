@@ -7127,37 +7127,44 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           .filter((event) => event.type === "item.completed")
           .map((event) => [event.payload.itemType, event.payload.detail]),
         [
-          ["reasoning", undefined],
+          ["reasoning", "Thinking"],
           ["assistant_message", "Hello world"],
           ["assistant_message", "Fresh"],
           ["assistant_message", "Second"],
-          ["reasoning", undefined],
+          ["reasoning", "New thoughts"],
           ["assistant_message", "New"],
         ],
       );
-      // Reasoning parts project lifecycle boundaries without leaking text:
-      // one in-progress update per part sighting, then a completion. The
-      // post-removal replay emits a second pair for the fresh part state.
+      // Reasoning parts project lifecycle boundaries and carry provider text
+      // on detail when present. This reconnect fixture stamps native end on
+      // every snapshot, so each part sighting is one in-progress update plus
+      // an immediate completion (no mid-flight streaming updates).
       const reasoningUpdates = events
         .filter((event) => event.type === "item.updated")
         .filter((event) => event.payload.itemType === "reasoning");
       NodeAssert.equal(reasoningUpdates.length, 2);
+      NodeAssert.deepEqual(
+        reasoningUpdates.map((event) => event.payload.detail),
+        ["Thinking", "New thoughts"],
+      );
       for (const update of reasoningUpdates) {
         NodeAssert.equal(update.itemId, "reasoning-part");
         NodeAssert.equal(update.payload.status, "inProgress");
         NodeAssert.equal(update.payload.title, "Thinking");
-        NodeAssert.equal(update.payload.detail, undefined);
         NodeAssert.equal(update.createdAt, "1970-01-01T00:00:00.001Z");
       }
       const reasoningCompletions = events
         .filter((event) => event.type === "item.completed")
         .filter((event) => event.payload.itemType === "reasoning");
       NodeAssert.equal(reasoningCompletions.length, 2);
+      NodeAssert.deepEqual(
+        reasoningCompletions.map((event) => event.payload.detail),
+        ["Thinking", "New thoughts"],
+      );
       for (const completed of reasoningCompletions) {
         NodeAssert.equal(completed.itemId, "reasoning-part");
         NodeAssert.equal(completed.payload.status, "completed");
         NodeAssert.equal(completed.payload.title, "Thinking");
-        NodeAssert.equal(completed.payload.detail, undefined);
         NodeAssert.equal(completed.createdAt, "1970-01-01T00:00:00.002Z");
       }
       yield* adapter.stopSession(threadId);
@@ -7284,6 +7291,103 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         stoppedEvents[0]?.type === "item.completed" && stoppedEvents[0].itemId,
         "reasoning-2",
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("preserves readable OpenCode reasoning text on lifecycle detail", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-readable-reasoning");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "readable-reasoning-message";
+      const finalText =
+        "The user wants to know their opencode version. I should run the command to check.";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID,
+            info: { id: messageID, role: "assistant", time: { created: 1, completed: 2 } },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "reasoning-deepseek",
+              sessionID,
+              messageID,
+              type: "reasoning",
+              text: "The user wants to know their opencode version.",
+              time: { start: 100 },
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "reasoning-deepseek",
+              sessionID,
+              messageID,
+              type: "reasoning",
+              text: finalText,
+              time: { start: 100 },
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "reasoning-deepseek",
+              sessionID,
+              messageID,
+              type: "reasoning",
+              text: finalText,
+              time: { start: 100, end: 250 },
+            },
+          },
+        },
+        { type: "session.compacted", properties: { sessionID } },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "thread.state.changed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = yield* Fiber.join(eventsFiber);
+      const reasoningLifecycle = events
+        .filter(isItemLifecycleForTest)
+        .filter((event) => event.payload.itemType === "reasoning");
+      NodeAssert.deepEqual(
+        reasoningLifecycle.map((event) => [event.type, event.payload.status, event.payload.detail]),
+        [
+          ["item.updated", "inProgress", "The user wants to know their opencode version."],
+          ["item.updated", "inProgress", finalText],
+          ["item.completed", "completed", finalText],
+        ],
+      );
+      NodeAssert.deepEqual(
+        events
+          .filter((event) => event.type === "content.delta")
+          .map((event) => [event.payload.streamKind, event.payload.delta]),
+        [
+          ["reasoning_text", "The user wants to know their opencode version."],
+          ["reasoning_text", " I should run the command to check."],
+        ],
+      );
+      yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped),
   );
 
