@@ -1,3 +1,6 @@
+import IconArrowsSort from "@tabler/icons-react-native/IconArrowsSort";
+import IconCircleDashed from "@tabler/icons-react-native/IconCircleDashed";
+import IconCircleX from "@tabler/icons-react-native/IconCircleX";
 import type { Icon } from "@tabler/icons-react-native/types";
 /*
  * Keep these as per-icon exports. Importing the package root eagerly registers
@@ -229,6 +232,9 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   trash: IconTrash,
   wifi: IconWifi,
   "wifi.slash": IconWifiOff,
+  "arrow.up.arrow.down": IconArrowsSort,
+  "circle.dashed": IconCircleDashed,
+  "xmark.circle": IconCircleX,
   xmark: IconX,
   "xmark.circle.fill": IconCircleXFilled,
 } satisfies Partial<Record<SFSymbol, Icon>>;

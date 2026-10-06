@@ -1,3 +1,4 @@
+import { useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import { Pressable, View } from "react-native";
 
@@ -7,7 +8,7 @@ export interface SidebarHeaderActionsProps {
 
 function FallbackHeaderButton(props: {
   readonly accessibilityLabel: string;
-  readonly icon: "gearshape" | "square.and.pencil";
+  readonly icon: "gearshape" | "square.and.pencil" | "arrow.triangle.pull";
   readonly onPress: () => void;
 }) {
   return (
@@ -29,8 +30,14 @@ function FallbackHeaderButton(props: {
 }
 
 export function SidebarHeaderActions(props: SidebarHeaderActionsProps) {
+  const navigation = useNavigation();
   return (
     <View className="flex-row items-center gap-0.5">
+      <FallbackHeaderButton
+        accessibilityLabel="Open pull requests"
+        icon="arrow.triangle.pull"
+        onPress={() => navigation.navigate("PullRequests")}
+      />
       <FallbackHeaderButton
         accessibilityLabel="Open settings"
         icon="gearshape"

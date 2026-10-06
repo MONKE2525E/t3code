@@ -1,3 +1,4 @@
+import { createPullRequestEnvironmentAtoms } from "@t3tools/client-runtime/state/pull-requests";
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import { WS_METHODS } from "@t3tools/contracts";
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -14,3 +15,5 @@ export const composerPullRequests = {
     staleTimeMs: 60_000,
   }),
 };
+
+export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime);

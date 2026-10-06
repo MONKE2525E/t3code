@@ -190,13 +190,14 @@ function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): Markdown
 }
 
 export function FileMarkdownPreview(props: {
-  readonly cwd: string;
+  readonly cwd?: string;
+  readonly embedded?: boolean;
   readonly captured?: boolean;
-  readonly environmentId: EnvironmentId;
+  readonly environmentId?: EnvironmentId;
   readonly markdown: string;
-  readonly relativePath: string;
+  readonly relativePath?: string;
   /** Absent for a file opened from a project draft, which has no thread yet. */
-  readonly threadId: ThreadId | null;
+  readonly threadId?: ThreadId | null;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
@@ -212,7 +213,8 @@ export function FileMarkdownPreview(props: {
     }
   }, [props.onRefresh]);
   const markdownDirectory = useMemo(
-    () => getBrowseDirectoryPath(resolveWorkspaceFilePath(props.cwd, props.relativePath)),
+    () =>
+      getBrowseDirectoryPath(resolveWorkspaceFilePath(props.cwd ?? "", props.relativePath ?? "")),
     [props.cwd, props.relativePath],
   );
   const renderImage = useCallback<MarkdownImageRenderer>(
@@ -227,6 +229,7 @@ export function FileMarkdownPreview(props: {
       }
       if (
         props.captured ||
+        !props.environmentId ||
         media === null ||
         media.kind !== "image" ||
         media.access === "unavailable"
@@ -250,6 +253,28 @@ export function FileMarkdownPreview(props: {
     void tryOpenExternalUrl(href, "markdown-link");
   }, []);
 
+  const content = (
+    <View className="mx-auto w-full max-w-[760px]">
+      {hasNativeSelectableMarkdownText() ? (
+        <SelectableMarkdownText
+          markdown={props.markdown}
+          onLinkPress={onLinkPress}
+          renderImage={renderImage}
+          textStyle={styles.nativeTextStyle}
+        />
+      ) : (
+        <Markdown
+          options={{ gfm: true }}
+          renderers={styles.renderers}
+          styles={styles.styles}
+          theme={styles.theme}
+        >
+          {props.markdown}
+        </Markdown>
+      )}
+    </View>
+  );
+  if (props.embedded) return <View className="p-4">{content}</View>;
   return (
     <ScrollView
       className="flex-1 bg-sheet"
@@ -263,25 +288,7 @@ export function FileMarkdownPreview(props: {
         ) : undefined
       }
     >
-      <View className="mx-auto w-full max-w-[760px]">
-        {hasNativeSelectableMarkdownText() ? (
-          <SelectableMarkdownText
-            markdown={props.markdown}
-            onLinkPress={onLinkPress}
-            renderImage={renderImage}
-            textStyle={styles.nativeTextStyle}
-          />
-        ) : (
-          <Markdown
-            options={{ gfm: true }}
-            renderers={styles.renderers}
-            styles={styles.styles}
-            theme={styles.theme}
-          >
-            {props.markdown}
-          </Markdown>
-        )}
-      </View>
+      {content}
     </ScrollView>
   );
 }

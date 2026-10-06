@@ -154,3 +154,44 @@ vp run eas:android:dev
 vp run eas:android:preview:dev
 vp run eas:android:preview
 ```
+
+## Custom Android APK
+
+The custom build installs as **T3 Code Custom**, using `com.monke2525e.t3code.custom`
+and the `t3code-custom` URL scheme. It can coexist with the official app. Official
+Expo updates are disabled, so they cannot replace your local changes.
+
+From the repository root, with the Android SDK and JDK 21 configured:
+
+```bash
+pnpm install --frozen-lockfile
+# Include the public T3 Connect configuration for sign-in and remote access.
+# If you already have a .env, add the relevant values instead of replacing it.
+cp -n .env.example .env
+node scripts/build-custom-mobile.ts
+```
+
+This builds for ARM64 Android phones, including the Z Fold. Add `--emulator`
+to include x86_64 for local emulator verification.
+
+The signed, standalone APK is written to `.t3/artifacts/T3-Code-Custom.apk`.
+It runs without Metro. Install it on your Android device, allow installation from that source,
+and pair your existing environment through Add environment.
+
+The script stores its signing key and password in `~/.local/share/t3-custom-mobile`
+outside the checkout. Keep that directory private and backed up: future APKs need
+the same key to update an existing installation. Public T3 Connect configuration
+is optional, as with other source builds. Direct LAN and tailnet pairing work
+without a cloud account.
+
+The Pull requests button on Home and in the sidebar opens the native viewer.
+Thread Git controls open supported GitHub PR URLs in-app; other host URLs retain
+the external browser fallback. The viewer shares desktop's list, detail,
+activity, and paginated diff queries, with Summary, Timeline, and Code tabs.
+On wider screens its own PR list replaces the thread sidebar, leaving space
+for the selected PR. Comment and review controls follow host capabilities and
+viewer permissions. Merge actions and inline review comments remain on the host.
+
+For direct LAN pairing, enter the complete server origin, including its port
+(for example, `http://192.168.0.187:3773`). The computer must accept connections
+on that port from the phone, and both devices must be on a reachable network.

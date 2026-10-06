@@ -1,3 +1,4 @@
+import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
 import {
   BackHandler,
@@ -34,6 +35,7 @@ export function MaterialThreadListToolbar(props: {
   readonly onLayout?: (event: LayoutChangeEvent) => void;
   readonly onRequestVisibility?: () => void;
 }) {
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { fabSize } = useAndroidControlSizing();
   const { height: toolbarHeight, ...headerPadding } = useMaterialToolbarLayout();
@@ -112,6 +114,11 @@ export function MaterialThreadListToolbar(props: {
                 accessibilityLabel="Search threads"
                 icon="magnifyingglass"
                 onPress={openSearch}
+              />
+              <AndroidHeaderIconButton
+                accessibilityLabel="Open pull requests"
+                icon="arrow.triangle.pull"
+                onPress={() => navigation.navigate("PullRequests")}
               />
               <AndroidHeaderIconButton
                 accessibilityLabel="Open settings"

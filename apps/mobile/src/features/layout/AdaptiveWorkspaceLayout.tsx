@@ -256,7 +256,9 @@ function AdaptiveWorkspaceLayoutContent(
   // In split layouts the sidebar IS the thread list — it renders on every
   // route, including Home (which shows an empty-detail pane instead of the
   // compact list).
-  const shouldRenderPrimarySidebar = layout.usesSplitView;
+  const isPullRequestWorkspace =
+    pathname === "/pull-requests" || pathname.startsWith("/pull-requests/");
+  const shouldRenderPrimarySidebar = layout.usesSplitView && !isPullRequestWorkspace;
   const fileInspector = useMemo(
     () =>
       deriveFileInspectorPaneLayout({
@@ -283,8 +285,8 @@ function AdaptiveWorkspaceLayoutContent(
       deriveWorkspacePaneLayout({
         layout,
         viewportWidth: width,
-        primarySidebarPreferredVisible: showPrimarySidebar,
-        auxiliaryPanePreferredVisible,
+        primarySidebarPreferredVisible: showPrimarySidebar && !isPullRequestWorkspace,
+        auxiliaryPanePreferredVisible: auxiliaryPanePreferredVisible && !isPullRequestWorkspace,
         auxiliaryPaneRole,
         auxiliaryPanePreferredWidth: auxiliaryPanePreferredWidth ?? undefined,
       }),
@@ -294,6 +296,7 @@ function AdaptiveWorkspaceLayoutContent(
       auxiliaryPanePreferredWidth,
       layout,
       showPrimarySidebar,
+      isPullRequestWorkspace,
       width,
     ],
   );

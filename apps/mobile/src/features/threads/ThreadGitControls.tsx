@@ -19,6 +19,7 @@ import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useEnvironmentScope } from "../../state/session";
+import { useOpenPullRequest } from "../pull-requests/useOpenPullRequest";
 import {
   basename,
   getTerminalStatusLabel,
@@ -115,6 +116,7 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
 
 function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const navigation = useNavigation();
+  const openPullRequest = useOpenPullRequest();
   const environmentId = props.environmentId;
   const canWriteSourceControl = useEnvironmentScope(
     environmentId ? EnvironmentId.make(String(environmentId)) : null,
@@ -169,10 +171,10 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
       Alert.alert("No open PR", "This branch does not have an open pull request.");
       return;
     }
-    if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
+    if (!(await openPullRequest(prUrl, String(props.environmentId), String(props.threadId)))) {
       Alert.alert("Unable to open PR", "The pull request could not be opened.");
     }
-  }, [gitStatus]);
+  }, [gitStatus, openPullRequest, props.environmentId, props.threadId]);
 
   const runActionWithPrompt = useCallback(
     async (input: GitActionRequestInput) => {

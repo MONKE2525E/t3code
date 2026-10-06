@@ -53,6 +53,8 @@ import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
+import { PullRequestsScreen } from "./features/pull-requests/PullRequestsScreen";
+import { PullRequestDetailScreen } from "./features/pull-requests/PullRequestDetailScreen";
 import { HomeRouteScreen } from "./features/home/HomeRouteScreen";
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
 import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
@@ -685,6 +687,19 @@ const RootStackConfig = createNativeStackNavigator({
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
       },
+    }),
+    PullRequests: createNativeStackScreen({
+      screen: PullRequestsScreen,
+      linking: "pull-requests",
+      options: { headerShown: false },
+    }),
+    PullRequestDetail: createNativeStackScreen({
+      screen: PullRequestDetailScreen,
+      linking: {
+        path: "pull-requests/:environmentId/:projectId/:repository/:number",
+        parse: { number: Number },
+      },
+      options: { headerShown: false },
     }),
     Thread: createNativeStackScreen({
       screen: ThreadRouteScreen,

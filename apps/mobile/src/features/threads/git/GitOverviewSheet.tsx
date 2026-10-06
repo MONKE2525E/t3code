@@ -34,6 +34,7 @@ import {
   NativeStackScreenOptions,
   nativeHeaderScrollEdgeEffects,
 } from "../../../native/StackHeader";
+import { useOpenPullRequest } from "../../pull-requests/useOpenPullRequest";
 import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
@@ -69,6 +70,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
 function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
+  const openPullRequest = useOpenPullRequest();
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
   const isInspector = presentation === "inspector";
@@ -145,10 +147,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       Alert.alert("No open PR", "This branch does not have an open pull request.");
       return;
     }
-    if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
+    if (!(await openPullRequest(prUrl, environmentId, threadId))) {
       Alert.alert("Unable to open PR", "The pull request could not be opened.");
     }
-  }, [gitStatus.data]);
+  }, [gitStatus.data, openPullRequest, environmentId, threadId]);
 
   const runActionWithPrompt = useCallback(
     async (input: GitActionRequestInput) => {
