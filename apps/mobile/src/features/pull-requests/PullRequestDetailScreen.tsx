@@ -68,7 +68,7 @@ export function PullRequestDetailPane(props: {
   const { refresh: refreshDetail } = detail;
   const { refresh: refreshActivity } = activity;
 
-  const refresh = useCallback(async () => {
+  const refresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
     setRefreshError(null);
@@ -98,15 +98,7 @@ export function PullRequestDetailPane(props: {
     } finally {
       setRefreshing(false);
     }
-  }, [
-    invalidate,
-    props.environmentId,
-    props.reference,
-    refreshActivity,
-    refreshDetail,
-    refreshing,
-    registry,
-  ]);
+  };
 
   const onPosted = useCallback(() => {
     refreshDetail();
@@ -346,9 +338,9 @@ function HeaderFacts(props: {
           </View>
         )}
         <Text className="text-xs">
-          <Text className="text-xs text-emerald-600 dark:text-emerald-400">+{pr.additions}</Text>
+          <Text className="text-xs text-primary-text">+{pr.additions}</Text>
           <Text className="text-xs text-foreground-tertiary"> </Text>
-          <Text className="text-xs text-red-600 dark:text-red-400">-{pr.deletions}</Text>
+          <Text className="text-xs text-danger-foreground">-{pr.deletions}</Text>
           <Text className="text-xs text-foreground-muted">
             {" "}
             in {pr.changedFiles} {pr.changedFiles === 1 ? "file" : "files"}

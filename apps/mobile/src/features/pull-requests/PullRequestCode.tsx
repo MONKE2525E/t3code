@@ -15,6 +15,8 @@ import { resolveNativeReviewDiffView } from "../diffs/nativeReviewDiffSurface";
 import { useNativeReviewDiffBridge } from "../review/useNativeReviewDiffBridge";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 
+const NativeDiff = resolveNativeReviewDiffView();
+
 const EMPTY_IDS: ReadonlyArray<string> = Object.freeze([]);
 
 export function PullRequestCode(props: {
@@ -47,7 +49,6 @@ export function PullRequestCode(props: {
     selectedRowIds: EMPTY_IDS,
     canHighlight: parsed.kind === "files",
   });
-  const NativeDiff = resolveNativeReviewDiffView();
   const insets = useSafeAreaInsets();
   if (query.data === null)
     return query.error ? (

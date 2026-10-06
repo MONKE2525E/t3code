@@ -141,6 +141,17 @@ describe("PR presentation", () => {
 });
 
 describe("PR checks", () => {
+  it("treats checks requiring action as failures and sorts them before running checks", () => {
+    const checks = [{ status: "pending" as const }, { status: "action-required" as const }];
+    expect(summarizePullRequestChecks(checks)).toEqual({
+      tone: "failure",
+      label: "1 of 2 checks failing",
+    });
+    expect(sortPullRequestChecks(checks).map((check) => check.status)).toEqual([
+      "action-required",
+      "pending",
+    ]);
+  });
   it("summarizes failures before running checks before a clean run", () => {
     expect(summarizePullRequestChecks([]).tone).toBe("none");
     expect(summarizePullRequestChecks([{ status: "success" }, { status: "skipped" }])).toEqual({

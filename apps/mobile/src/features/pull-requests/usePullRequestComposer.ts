@@ -1,6 +1,6 @@
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { pullRequestEnvironment } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -24,36 +24,33 @@ export function usePullRequestComposer(input: {
     reportFailure: false,
   });
   const { environmentId, reference, onPosted } = input;
-  const send = useCallback(
-    async (selectedVerdict: PullRequestReviewVerdict = verdict) => {
-      if (busy) return;
-      setBusy(true);
-      setError(null);
-      try {
-        const result =
-          selectedVerdict === "comment"
-            ? await comment({ environmentId, input: { ...reference, body } })
-            : await submitReview({
-                environmentId,
-                input: { ...reference, body, verdict: selectedVerdict, comments: [] },
-              });
-        if (result._tag === "Success") {
-          setBody("");
-          onPosted();
-        } else {
-          const failure = squashAtomCommandFailure(result);
-          setError(
-            failure instanceof Error
-              ? failure.message
-              : "Could not submit. Your draft is kept; try again.",
-          );
-        }
-      } finally {
-        setBusy(false);
+  const send = async (selectedVerdict: PullRequestReviewVerdict = verdict) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result =
+        selectedVerdict === "comment"
+          ? await comment({ environmentId, input: { ...reference, body } })
+          : await submitReview({
+              environmentId,
+              input: { ...reference, body, verdict: selectedVerdict, comments: [] },
+            });
+      if (result._tag === "Success") {
+        setBody("");
+        onPosted();
+      } else {
+        const failure = squashAtomCommandFailure(result);
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : "Could not submit. Your draft is kept; try again.",
+        );
       }
-    },
-    [body, busy, comment, environmentId, onPosted, reference, submitReview, verdict],
-  );
+    } finally {
+      setBusy(false);
+    }
+  };
   return {
     body,
     setBody,

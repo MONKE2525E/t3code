@@ -145,7 +145,7 @@ export function PullRequestListPane(props: {
     health,
   });
 
-  const refresh = useCallback(async () => {
+  const refresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
     try {
@@ -157,7 +157,7 @@ export function PullRequestListPane(props: {
     } finally {
       setRefreshing(false);
     }
-  }, [invalidate, listing, props.environmentId, refreshing, scope]);
+  };
 
   const loadMore = useCallback(() => {
     if (!data?.truncated || listing.isPending) return;
@@ -512,11 +512,9 @@ const PullRequestRow = memo(function PullRequestRow(props: {
         <Text className="text-xs text-foreground-tertiary">{relativeTime(entry.updatedAt)}</Text>
         {hasStats ? (
           <Text className="text-xs">
-            <Text className="text-xs text-emerald-600 dark:text-emerald-400">
-              +{entry.additions}
-            </Text>
+            <Text className="text-xs text-primary-text">+{entry.additions}</Text>
             <Text className="text-xs text-foreground-tertiary"> </Text>
-            <Text className="text-xs text-red-600 dark:text-red-400">-{entry.deletions}</Text>
+            <Text className="text-xs text-danger-foreground">-{entry.deletions}</Text>
           </Text>
         ) : null}
       </View>

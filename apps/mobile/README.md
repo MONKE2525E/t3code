@@ -161,6 +161,9 @@ The custom build installs as **T3 Code Custom**, using `com.monke2525e.t3code.cu
 and the `t3code-custom` URL scheme. It can coexist with the official app. Official
 Expo updates are disabled, so they cannot replace your local changes.
 
+Use a source revision compatible with your server. An older mobile runtime can
+be rejected after an orchestration protocol upgrade.
+
 From the repository root, with the Android SDK and JDK 21 configured:
 
 ```bash
