@@ -7,6 +7,8 @@ import type {
   PullRequestState,
 } from "@t3tools/contracts";
 
+import { isPullRequestNotFound, readableFailure } from "@t3tools/shared/pullRequestFailure";
+
 import type { AppSymbolName } from "../../components/AppSymbol";
 
 /** What the list asks the hosts for, plus the local ordering of what came back. */
@@ -106,21 +108,6 @@ export function matchesPullRequestQuery(entry: PullRequestListEntry, query: stri
       .toLowerCase()
       .includes(needle)
   );
-}
-
-export function parseNativePullRequestUrl(url: string) {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
-    const match = /^\/(.+)\/pull\/(\d+)\/?$/.exec(parsed.pathname);
-    if (!match) return null;
-    const number = Number(match[2]);
-    return Number.isSafeInteger(number) && number > 0
-      ? { host: parsed.host, repository: match[1]!, number }
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 // Use the pane's available width: the persistent workspace sidebar already
@@ -232,9 +219,11 @@ export function sortPullRequestChecks<T extends Pick<PullRequestCheck, "status">
 
 export type PullRequestListStatus =
   | { readonly kind: "rows" }
-  | { readonly kind: "loading" }
+  | { readonly kind: "loading"; readonly caption?: string }
+  | { readonly kind: "unsupported"; readonly title: string; readonly message: string }
   | { readonly kind: "error"; readonly title: string; readonly message: string }
   | { readonly kind: "setup"; readonly title: string; readonly message: string }
+  | { readonly kind: "no-projects" }
   | { readonly kind: "empty-search" | "empty-filtered" | "empty" };
 
 export interface PullRequestListHealth {
@@ -250,26 +239,42 @@ export interface PullRequestListHealth {
 }
 
 const SETUP_FALLBACK = "Configure this provider on the environment.";
+const RETAINED_ROWS = "Showing the last pull requests loaded.";
 
 /**
  * Decides what the list body shows when it has no rows, so a failure, a setup gap and a real
  * empty answer never share one message. With rows on screen the list is always "rows" and the
  * same facts come back as a notice instead.
+ *
+ * `pullRequestsSupported` is undefined until the environment has said what it can do, which
+ * reads as loading rather than as a verdict. A search still in flight is also loading: the
+ * answer on screen belongs to the previous query, and "nothing matches" would be a claim about
+ * a question nobody has finished asking.
  */
 export function resolvePullRequestListStatus(input: {
   readonly rowCount: number;
   readonly hasData: boolean;
   readonly pending: boolean;
   readonly query: string;
+  readonly searching: boolean;
   readonly filterCount: number;
+  readonly projectCount: number;
+  readonly pullRequestsSupported: boolean | undefined;
   readonly health: PullRequestListHealth;
 }): PullRequestListStatus {
   if (input.rowCount > 0) return { kind: "rows" };
+  if (input.pullRequestsSupported === false) {
+    return {
+      kind: "unsupported",
+      title: "Pull requests unavailable",
+      message: "Update this environment's T3 Code server to browse pull requests.",
+    };
+  }
   const { health } = input;
   if (!input.hasData) {
     return health.error
       ? { kind: "error", title: "Could not load pull requests", message: health.error }
-      : input.pending
+      : input.pending || input.pullRequestsSupported === undefined
         ? { kind: "loading" }
         : { kind: "empty" };
   }
@@ -291,7 +296,16 @@ export function resolvePullRequestListStatus(input: {
         .join("\n"),
     };
   }
-  if (input.query.trim()) return { kind: "empty-search" };
+  // Ahead of the search and the filters, because neither can produce a row until a project does.
+  if (input.projectCount === 0) return { kind: "no-projects" };
+  const query = input.query.trim();
+  if (input.searching && query) {
+    return {
+      kind: "loading",
+      caption: `Searching for "${query.length > 40 ? `${query.slice(0, 40)}...` : query}"`,
+    };
+  }
+  if (query) return { kind: "empty-search" };
   return { kind: input.filterCount > 0 ? "empty-filtered" : "empty" };
 }
 
@@ -301,10 +315,43 @@ export function resolvePullRequestListStatus(input: {
  */
 export function resolvePullRequestNotices(health: PullRequestListHealth): ReadonlyArray<string> {
   return [
-    ...(health.error ? [health.error] : []),
+    ...(health.error ? [`${health.error} ${RETAINED_ROWS}`] : []),
     ...health.projectErrors.map((error) => `${error.projectTitle}: ${error.message}`),
     ...health.unconfigured.map(
       (provider) => `${provider.host}: ${provider.detail ?? SETUP_FALLBACK}`,
     ),
   ];
+}
+
+const LOAD_HINT =
+  "Check that the environment is connected and signed in to the host, then try again.";
+
+/**
+ * What to put under a failed read. The host's own sentence when it said something, which is
+ * what names a rate limit or a sign-in problem; the operation wrapper and bare tool noise are
+ * dropped, and a hint stands in only when nothing readable is left.
+ */
+export function pullRequestFailureMessage(message: string | null | undefined): string {
+  return readableFailure(message ?? "", LOAD_HINT);
+}
+
+/**
+ * The page-sized state for a pull request that could not be read. A number that is not a pull
+ * request, or is hidden from this account, is a different problem from a connection that
+ * dropped, and only the second is cured by trying again.
+ */
+export function describePullRequestFailure(input: {
+  readonly failure: unknown;
+  readonly message: string;
+  readonly number: number;
+}): { readonly title: string; readonly message: string } {
+  return isPullRequestNotFound(input.failure)
+    ? {
+        title: `Pull request #${input.number} not found`,
+        message: "It may be an issue rather than a pull request, or this account can't see it.",
+      }
+    : {
+        title: "Could not load this pull request",
+        message: pullRequestFailureMessage(input.message),
+      };
 }

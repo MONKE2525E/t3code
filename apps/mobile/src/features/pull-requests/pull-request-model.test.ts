@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProjectId, type PullRequestListEntry } from "@t3tools/contracts";
+import {
+  ProjectId,
+  PullRequestOperationError,
+  type PullRequestListEntry,
+} from "@t3tools/contracts";
 import {
   countActivePullRequestFilters,
   DEFAULT_PULL_REQUEST_FILTERS,
+  describePullRequestFailure,
   matchesPullRequestQuery,
   mergePullRequestPages,
-  parseNativePullRequestUrl,
+  pullRequestFailureMessage,
   resolvePullRequestListStatus,
   resolvePullRequestNotices,
   resolvePullRequestPresentation,
@@ -188,7 +193,10 @@ describe("PR list status", () => {
     hasData: true,
     pending: false,
     query: "",
+    searching: false,
     filterCount: 0,
+    projectCount: 2,
+    pullRequestsSupported: true as boolean | undefined,
     health: healthy,
   };
   it("shows rows whenever there are rows, and carries problems as notices instead", () => {
@@ -201,7 +209,7 @@ describe("PR list status", () => {
       kind: "rows",
     });
     expect(resolvePullRequestNotices(health)).toEqual([
-      "Rate limited",
+      "Rate limited Showing the last pull requests loaded.",
       "App: No access",
       "git.example.com: Configure this provider on the environment.",
     ]);
@@ -235,29 +243,84 @@ describe("PR list status", () => {
     expect(resolvePullRequestListStatus({ ...base, filterCount: 1 }).kind).toBe("empty-filtered");
     expect(resolvePullRequestListStatus(base).kind).toBe("empty");
   });
+  it("says so when the environment cannot list pull requests, instead of showing an error", () => {
+    expect(
+      resolvePullRequestListStatus({ ...base, hasData: false, pullRequestsSupported: false }),
+    ).toMatchObject({ kind: "unsupported", title: "Pull requests unavailable" });
+  });
+  it("waits on an environment that has not reported its capabilities", () => {
+    expect(
+      resolvePullRequestListStatus({
+        ...base,
+        hasData: false,
+        pullRequestsSupported: undefined,
+      }).kind,
+    ).toBe("loading");
+    // A failed read is still reported while the capabilities are unknown.
+    expect(
+      resolvePullRequestListStatus({
+        ...base,
+        hasData: false,
+        pullRequestsSupported: undefined,
+        health: { ...healthy, error: "Offline" },
+      }).kind,
+    ).toBe("error");
+  });
+  it("does not call a search that is still running an empty answer", () => {
+    expect(resolvePullRequestListStatus({ ...base, query: "auth", searching: true })).toMatchObject(
+      { kind: "loading", caption: 'Searching for "auth"' },
+    );
+    expect(resolvePullRequestListStatus({ ...base, query: "auth", searching: false }).kind).toBe(
+      "empty-search",
+    );
+  });
+  it("names an environment with no projects before blaming the filters or the search", () => {
+    expect(
+      resolvePullRequestListStatus({ ...base, projectCount: 0, query: "auth", filterCount: 2 })
+        .kind,
+    ).toBe("no-projects");
+  });
+  it("lets an unreadable project outrank a missing one", () => {
+    expect(
+      resolvePullRequestListStatus({
+        ...base,
+        projectCount: 0,
+        health: { ...healthy, projectErrors: [{ projectTitle: "App", message: "No access" }] },
+      }).kind,
+    ).toBe("error");
+  });
 });
 
-describe("native PR URL routing", () => {
-  it("reads public and enterprise GitHub URLs", () => {
-    expect(parseNativePullRequestUrl("https://github.com/example/app/pull/42?tab=files")).toEqual({
-      host: "github.com",
-      repository: "example/app",
-      number: 42,
-    });
-    expect(parseNativePullRequestUrl("https://git.example.com/example/app/pull/7")).toEqual({
-      host: "git.example.com",
-      repository: "example/app",
-      number: 7,
-    });
+describe("PR failure presentation", () => {
+  it("drops the operation wrapper and keeps the host's own sentence", () => {
+    expect(
+      pullRequestFailureMessage(
+        "Pull request operation detail failed: API rate limit exceeded. Try again in 12 minutes.",
+      ),
+    ).toBe("API rate limit exceeded. Try again in 12 minutes.");
   });
-  it("keeps unsupported hosts' routes and invalid numbers on the external path", () => {
-    for (const url of [
-      "javascript:alert(1)",
-      "https://github.com/example/app/pull/0",
-      "https://github.com/example/app/pull/9007199254740993",
-      "https://gitlab.com/example/app/-/merge_requests/42",
-      "not a url",
-    ])
-      expect(parseNativePullRequestUrl(url)).toBeNull();
+  it("replaces bare tool noise with what to check", () => {
+    for (const message of ["GitHub CLI failed", "exited with code 1", "", null])
+      expect(pullRequestFailureMessage(message)).toMatch(/signed in to the host/);
+  });
+  it("tells a pull request that is not there from one that failed to load", () => {
+    const notFound = new PullRequestOperationError({
+      operation: "detail",
+      detail: "Could not resolve to a PullRequest",
+      reason: "not-found",
+    });
+    expect(
+      describePullRequestFailure({ failure: notFound, message: notFound.message, number: 9 }),
+    ).toEqual({
+      title: "Pull request #9 not found",
+      message: "It may be an issue rather than a pull request, or this account can't see it.",
+    });
+    const rejected = new PullRequestOperationError({
+      operation: "detail",
+      detail: "Bad credentials",
+    });
+    expect(
+      describePullRequestFailure({ failure: rejected, message: rejected.message, number: 9 }),
+    ).toEqual({ title: "Could not load this pull request", message: "Bad credentials" });
   });
 });

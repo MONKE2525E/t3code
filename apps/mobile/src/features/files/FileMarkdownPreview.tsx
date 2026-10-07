@@ -37,7 +37,10 @@ interface MarkdownPreviewStyles {
   readonly nativeTextStyle: NativeMarkdownTextStyle;
 }
 
-function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): MarkdownPreviewStyles {
+function useMarkdownPreviewStyles(
+  renderImage?: MarkdownImageRenderer,
+  onLinkPress?: (href: string) => void,
+): MarkdownPreviewStyles {
   const { appearance } = useAppearancePreferences();
   const markdownFontSizes = useMemo(
     () => resolveMarkdownFontSizes(appearance.baseFontSize),
@@ -66,9 +69,9 @@ function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): Markdown
         <NativeText
           className="font-t3-medium"
           onPress={() => {
-            if (href) {
-              void tryOpenExternalUrl(href, "markdown-link");
-            }
+            if (!href) return;
+            if (onLinkPress) onLinkPress(href);
+            else void tryOpenExternalUrl(href, "markdown-link");
           }}
           style={{
             color: link,
@@ -184,6 +187,7 @@ function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): Markdown
     nativeMarkdownTypography,
     regularFontFamily,
     renderImage,
+    onLinkPress,
     strong,
     boldFontFamily,
   ]);
@@ -199,6 +203,8 @@ export function FileMarkdownPreview(props: {
   /** Absent for a file opened from a project draft, which has no thread yet. */
   readonly threadId?: ThreadId | null;
   readonly onRefresh?: () => Promise<void> | void;
+  /** Replaces the browser as the target of a link press, e.g. to open a pull request natively. */
+  readonly onLinkPress?: (href: string) => void;
 }) {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const handlePullToRefresh = useCallback(async () => {
@@ -248,10 +254,15 @@ export function FileMarkdownPreview(props: {
     },
     [markdownDirectory, props.environmentId, props.threadId, props.captured],
   );
-  const styles = useMarkdownPreviewStyles(renderImage);
-  const onLinkPress = useCallback((href: string) => {
-    void tryOpenExternalUrl(href, "markdown-link");
-  }, []);
+  const customLinkPress = props.onLinkPress;
+  const onLinkPress = useCallback(
+    (href: string) => {
+      if (customLinkPress) customLinkPress(href);
+      else void tryOpenExternalUrl(href, "markdown-link");
+    },
+    [customLinkPress],
+  );
+  const styles = useMarkdownPreviewStyles(renderImage, customLinkPress);
 
   const content = (
     <View className="mx-auto w-full max-w-[760px]">

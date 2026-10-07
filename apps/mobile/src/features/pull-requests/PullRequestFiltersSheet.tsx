@@ -10,6 +10,7 @@ import {
   countActivePullRequestFilters,
   DEFAULT_PULL_REQUEST_FILTERS,
   PULL_REQUEST_INVOLVEMENT_OPTIONS,
+  PULL_REQUEST_SORT_OPTIONS,
   PULL_REQUEST_STATE_OPTIONS,
   type PullRequestFilters,
 } from "./pull-request-model";
@@ -25,7 +26,7 @@ function Section(props: { title: string; children: ReactNode }) {
 }
 
 /**
- * State, involvement and project in one sheet, matching the desktop Filters menu. Choices apply
+ * Environment, sort, state, involvement and project in one sheet, matching the desktop Filters menu. Choices apply
  * as they are tapped, so the list behind the sheet is already the answer when it closes.
  */
 export function PullRequestFiltersSheet(props: {
@@ -35,11 +36,19 @@ export function PullRequestFiltersSheet(props: {
   /** Projects whose repository could not be read, with the reason, so they are not offered. */
   unavailable: ReadonlyMap<string, string>;
   onChange: (patch: Partial<PullRequestFilters>) => void;
+  environments: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly environmentLabel: string;
+  }>;
+  environmentId: string;
+  onEnvironmentChange: (environmentId: string) => void;
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const iconColor = String(useUniwindTheme()["--color-icon"]);
-  const active = countActivePullRequestFilters(props.filters) > 0;
+  const active =
+    countActivePullRequestFilters(props.filters) > 0 ||
+    props.filters.sort !== DEFAULT_PULL_REQUEST_FILTERS.sort;
   // Readable projects lead, so a run of unavailable ones does not read as an empty menu.
   const projects = [...props.projects].sort(
     (a, b) => Number(props.unavailable.has(a.id)) - Number(props.unavailable.has(b.id)),
@@ -74,6 +83,7 @@ export function PullRequestFiltersSheet(props: {
                     state: DEFAULT_PULL_REQUEST_FILTERS.state,
                     involvement: DEFAULT_PULL_REQUEST_FILTERS.involvement,
                     projectId: undefined,
+                    sort: DEFAULT_PULL_REQUEST_FILTERS.sort,
                   })
                 }
               >
@@ -93,6 +103,36 @@ export function PullRequestFiltersSheet(props: {
             contentContainerClassName="gap-5 px-4 py-4"
             showsVerticalScrollIndicator={false}
           >
+            {props.environments.length > 1 ? (
+              <Section title="Environment">
+                <View className="flex-row flex-wrap gap-2" accessibilityRole="radiogroup">
+                  {props.environments.map((environment) => (
+                    <PrChoice
+                      key={environment.environmentId}
+                      label={environment.environmentLabel}
+                      selected={environment.environmentId === props.environmentId}
+                      onPress={() => {
+                        if (environment.environmentId !== props.environmentId) {
+                          props.onEnvironmentChange(environment.environmentId);
+                        }
+                      }}
+                    />
+                  ))}
+                </View>
+              </Section>
+            ) : null}
+            <Section title="Sort">
+              <View className="flex-row flex-wrap gap-2" accessibilityRole="radiogroup">
+                {PULL_REQUEST_SORT_OPTIONS.map((option) => (
+                  <PrChoice
+                    key={option.value}
+                    label={option.label}
+                    selected={props.filters.sort === option.value}
+                    onPress={() => props.onChange({ sort: option.value })}
+                  />
+                ))}
+              </View>
+            </Section>
             <Section title="State">
               <View className="flex-row flex-wrap gap-2" accessibilityRole="radiogroup">
                 {PULL_REQUEST_STATE_OPTIONS.map((option) => (

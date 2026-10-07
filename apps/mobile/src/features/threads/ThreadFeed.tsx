@@ -104,6 +104,7 @@ import { useFontFamily } from "../../lib/useFontFamily";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { useOpenPullRequest } from "../pull-requests/useOpenPullRequest";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
@@ -1980,6 +1981,7 @@ type UserMessageContentProps = {
 function UserMessageContent(props: UserMessageContentProps) {
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
   const navigation = useNavigation();
+  const openPullRequest = useOpenPullRequest();
   const { selectedThread } = useThreadSelection();
   const text = replaceComposerContextReferences(props.text, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
@@ -2030,6 +2032,15 @@ function UserMessageContent(props: UserMessageContentProps) {
           environmentId={props.environmentId}
           records={props.context?.records}
           record={props.context?.records.find((record) => record.contextId === selected.contextId)}
+          onOpenPullRequestUrl={(url) => {
+            setSelected(null);
+            return openPullRequest(
+              url,
+              String(props.environmentId),
+              "pull-request",
+              selectedThread ? String(selectedThread.id) : undefined,
+            );
+          }}
           onClose={() => setSelected(null)}
         />
       ) : null}
@@ -2152,6 +2163,7 @@ function ThreadFeedPlaceholder(props: {
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const navigation = useNavigation();
+  const openPullRequest = useOpenPullRequest();
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
@@ -2356,10 +2368,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           );
           return;
         }
-        void tryOpenExternalUrl(presentation.href, "markdown-link");
+        void openPullRequest(
+          presentation.href,
+          String(props.environmentId),
+          "markdown-link",
+          String(props.threadId),
+        );
       }
     },
-    [props.environmentId, props.threadId, props.workspaceRoot, navigation],
+    [props.environmentId, props.threadId, props.workspaceRoot, navigation, openPullRequest],
   );
   const markdownLinkHandlers = useMemo<MarkdownLinkHandlers>(
     () => ({

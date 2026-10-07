@@ -36,59 +36,6 @@ export function PrIconButton(props: {
   );
 }
 
-/**
- * The compact toolbar control: a bordered, labelled button beside the search field. It carries no
- * press handler of its own when a menu wraps it, which supplies the press.
- */
-export function PrToolbarButton(props: {
-  icon: AppSymbolName;
-  label: string;
-  accessibilityLabel?: string;
-  onPress?: () => void;
-  badge?: number;
-  active?: boolean;
-  showChevron?: boolean;
-  className?: string;
-}) {
-  const iconColor = String(useUniwindTheme()["--color-icon"]);
-  const mutedColor = String(useUniwindTheme()["--color-icon-subtle"]);
-  return (
-    <Pressable
-      accessibilityLabel={props.accessibilityLabel ?? props.label}
-      accessibilityRole="button"
-      onPress={props.onPress}
-      className={cn(
-        "h-11 shrink flex-row items-center gap-1.5 rounded-lg border border-input-border bg-input px-3 active:bg-subtle-strong",
-        props.className,
-      )}
-    >
-      <SymbolView
-        name={props.icon}
-        size={16}
-        tintColor={props.active ? iconColor : mutedColor}
-        type="monochrome"
-      />
-      <Text
-        numberOfLines={1}
-        className={cn(
-          "shrink text-sm",
-          props.active ? "font-t3-medium text-foreground" : "text-foreground-secondary",
-        )}
-      >
-        {props.label}
-      </Text>
-      {props.badge ? (
-        <View className="min-w-5 items-center rounded-full bg-primary px-1.5 py-px">
-          <Text className="text-2xs font-t3-bold text-primary-foreground">{props.badge}</Text>
-        </View>
-      ) : null}
-      {props.showChevron ? (
-        <SymbolView name="chevron.down" size={11} tintColor={mutedColor} type="monochrome" />
-      ) : null}
-    </Pressable>
-  );
-}
-
 export function PrButton(props: {
   label: string;
   onPress: () => void;

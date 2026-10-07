@@ -1,22 +1,28 @@
 # Pull requests on mobile
 
 Open **Pull requests** from Home or the sidebar to browse repositories in a
-connected environment. Search by title, `#number` or author, then use the row
-beneath the search field:
+connected environment. Tap the search icon in the top bar to search by title,
+`#number` or author. The filter icon opens the options:
 
 - **Sort** orders the pull requests already loaded: recently or least recently
   updated, newest or oldest.
 - **Filters** opens a sheet for state (open, merged, closed, all), involvement
-  (everyone, review requested, authored by you) and project. A badge shows how
-  many filters differ from the defaults, and **Reset** clears them.
-- The environment menu appears when more than one environment is connected.
-- The refresh button asks the host for fresh results. Pull down on the list
+  (everyone, review requested, authored by you), project and sort. The filter
+  icon fills when the options differ from the defaults, and **Reset** clears them.
+- Environment selection appears in the filter sheet when more than one environment is connected.
+- The refresh button in the top bar asks the host for fresh results. Pull down on the list
   does the same.
+
+Filters and sorting are remembered on this device when you leave the page or
+restart the app. **Reset** restores the defaults. Switching environments clears
+the project filter.
 
 Each row shows the state, title, repository, number, author, branch and how
 recently it changed. A list that cannot load shows the reason with a **Retry**
-button. If some rows loaded and a project or host did not, a single notice above
-the list names what is missing. **Load more** appears when more results are
+button. If some rows loaded and a project or host did not, or a refresh failed, a
+single notice above the list names what is missing and the rows stay on screen.
+An environment without pull request support, or without projects, says so instead
+of showing an empty list. **Load more** appears when more results are
 available.
 
 Select a pull request to read its **Summary** (description, checks, reviewers,
@@ -25,6 +31,8 @@ changed files in **Code**. On a phone the pull request replaces the list and Bac
 returns to it. On a wide screen, such as an unfolded foldable or a tablet, the
 list stays beside the selected pull request, and the open tab and any draft
 comment carry across folding and unfolding. Tap a long title to show all of it.
+Collapse **Description** or **Checks** to make room while reading. Markdown task
+lists show completed and incomplete checkboxes.
 
 The Code tab loads large changes a slice at a time; **Next files** continues and
 **First files** returns to the beginning. Collapse file headers or mark files as
@@ -32,8 +40,22 @@ viewed while reviewing the current pull request.
 
 The Timeline tab offers comments and supported review verdicts when your account
 has permission. Submission asks for confirmation. If it fails, your draft stays
-in the editor. **Open on host** opens the full pull request for merging, inline
-comments, or content that the connected provider cannot supply.
+in the editor. The three-dot menu includes refresh, copy link or number, and
+supported draft, merge and close actions. Actions depend on the host and your
+permissions; merging and closing ask for confirmation. **Open on host** remains
+available for content that the connected provider cannot supply.
+
+A pull request link in a chat message, a linked pull request or a pull request
+context chip opens here when its repository belongs to one of the thread's
+environment's projects. It opens that pull request alone, even on wide screens,
+and Back returns to the thread. From there the menu can link or unlink it, and
+**Ask a question**, **Explain this PR** and **Fix findings in this thread** fill
+that thread's composer and take you back to it. Nothing is sent until you send
+it, and text you already wrote stays. Opened from the list, the same actions
+start a new thread on the project instead; fixing findings first checks the pull
+request out into its own worktree. Other links, and pull requests from
+repositories the environment does not hold, open in the browser or host app as
+usual.
 
 Repository access and authentication use the connected environment's source
 control tools. A missing tool, an expired login or a host rate limit appears in

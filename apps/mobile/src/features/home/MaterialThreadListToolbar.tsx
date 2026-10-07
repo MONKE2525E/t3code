@@ -11,7 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { MenuAction } from "@react-native-menu/menu";
 
 import { AndroidHeaderIconButton } from "../../components/AndroidScreenHeader";
-import { CompactBrandTitle } from "../../components/CompactBrandTitle";
+import { FittedCompactBrandTitle } from "../../components/CompactBrandTitle";
 import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
 import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -103,11 +103,17 @@ export function MaterialThreadListToolbar(props: {
           ) : (
             <>
               {/* Match the visible inset of the trailing 48dp icon button. */}
-              <View className="min-w-0 flex-1 pl-4">
+              <View
+                className={
+                  props.sidebar
+                    ? "min-w-0 flex-1 overflow-hidden pl-1"
+                    : "min-w-0 flex-1 overflow-hidden pl-4"
+                }
+              >
                 <WorkspaceConnectionTitle
                   grow
                   onPress={props.onOpenEnvironments}
-                  brand={<CompactBrandTitle allowFontScaling={false} />}
+                  brand={<FittedCompactBrandTitle />}
                 />
               </View>
               <AndroidHeaderIconButton

@@ -35,7 +35,6 @@ import {
   nativeHeaderScrollEdgeEffects,
 } from "../../../native/StackHeader";
 import { useOpenPullRequest } from "../../pull-requests/useOpenPullRequest";
-import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
@@ -147,7 +146,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       Alert.alert("No open PR", "This branch does not have an open pull request.");
       return;
     }
-    if (!(await openPullRequest(prUrl, environmentId, threadId))) {
+    if (!(await openPullRequest(prUrl, environmentId, "pull-request", String(threadId)))) {
       Alert.alert("Unable to open PR", "The pull request could not be opened.");
     }
   }, [gitStatus.data, openPullRequest, environmentId, threadId]);
@@ -388,7 +387,12 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
                     title={`#${link.number} ${link.snapshot?.title ?? "Pull request"}`}
                     subtitle={`${link.repository} · ${link.snapshot === null ? "Status pending" : link.snapshot.isDraft && link.snapshot.state === "open" ? "Draft" : link.snapshot.state}${link.watch === undefined ? "" : " · Watching"}`}
                     onPress={() => {
-                      void tryOpenExternalUrl(link.url, "pull-request").then((opened) => {
+                      void openPullRequest(
+                        link.url,
+                        environmentId,
+                        "pull-request",
+                        String(threadId),
+                      ).then((opened) => {
                         if (!opened)
                           Alert.alert("Unable to open PR", "The pull request could not be opened.");
                       });

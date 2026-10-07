@@ -5,24 +5,14 @@ import {
   type PullRequestListEntry,
   type PullRequestRef,
 } from "@t3tools/contracts";
-import type { MenuAction } from "@react-native-menu/menu";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  TextInput,
-  useColorScheme,
-  View,
-} from "react-native";
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, FlatList, Pressable, useColorScheme, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentQuery } from "../../state/query";
 import { pullRequestEnvironment } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -31,16 +21,18 @@ import {
   DEFAULT_PULL_REQUEST_FILTERS,
   matchesPullRequestQuery,
   mergePullRequestPages,
-  PULL_REQUEST_SORT_OPTIONS,
   type PullRequestFilters,
+  pullRequestFailureMessage,
   pullRequestRowKey,
   resolvePullRequestListStatus,
   resolvePullRequestNotices,
   resolvePullRequestPresentation,
   sortPullRequests,
 } from "./pull-request-model";
-import { PrButton, PrNotice, PrStateMessage, PrToolbarButton } from "./pull-request-components";
+import { PrButton, PrNotice, PrStateMessage } from "./pull-request-components";
 import { PullRequestFiltersSheet } from "./PullRequestFiltersSheet";
+import { PullRequestListToolbar } from "./PullRequestListToolbar";
+import { useChecksToneColor } from "./PullRequestSummaryTab";
 
 const PAGE_SIZE = 50;
 const MAX_LIMIT = 500;
@@ -59,7 +51,7 @@ function initialPaging(scope: string): Paging {
 }
 
 /**
- * Search, the Sort / Filters / environment toolbar and the list itself. Paging is tagged with the
+ * The top bar (search, filters, refresh) and the list itself. Paging is tagged with the
  * scope it was read for, so a changed filter starts from the first page while the search field
  * and its focus stay where they are.
  */
@@ -71,14 +63,23 @@ export function PullRequestListPane(props: {
   }>;
   onEnvironmentChange: (environmentId: string) => void;
   projects: ReadonlyArray<{ readonly id: string; readonly title: string }>;
+  /** Undefined until the environment has reported its capabilities. */
+  pullRequestsSupported: boolean | undefined;
   filters: PullRequestFilters;
   onFiltersChange: (patch: Partial<PullRequestFilters>) => void;
   selected: PullRequestRef | null;
   onSelect: (entry: PullRequestListEntry) => void;
+  /** Kept by the screen so it survives switching environments. */
+  search: string;
+  onSearchChange: (search: string) => void;
+  onBack: () => void;
+  layout: { split: boolean; showDetailOnly: boolean; listWidth: number };
+  /** The selected pull request, or the wide layout's placeholder for one. */
+  detail: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
   const { filters } = props;
-  const [search, setSearch] = useState("");
+  const { search, onSearchChange: setSearch } = props;
   const [query, setQuery] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -98,18 +99,21 @@ export function PullRequestListPane(props: {
   }, [search]);
 
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate);
+  // An environment that cannot list pull requests is not asked to; the body says so instead.
   const listing = useEnvironmentQuery(
-    pullRequestEnvironment.list({
-      environmentId: props.environmentId,
-      input: {
-        state: filters.state,
-        involvement: filters.involvement,
-        limit: paging.limit,
-        ...(filters.projectId ? { projectId: ProjectId.make(filters.projectId) } : {}),
-        ...(query ? { query } : {}),
-        ...(paging.cursors ? { cursors: paging.cursors } : {}),
-      },
-    }),
+    props.pullRequestsSupported === false
+      ? null
+      : pullRequestEnvironment.list({
+          environmentId: props.environmentId,
+          input: {
+            state: filters.state,
+            involvement: filters.involvement,
+            limit: paging.limit,
+            ...(filters.projectId ? { projectId: ProjectId.make(filters.projectId) } : {}),
+            ...(query ? { query } : {}),
+            ...(paging.cursors ? { cursors: paging.cursors } : {}),
+          },
+        }),
   );
   const data = listing.data;
   const entries = useMemo(
@@ -129,8 +133,11 @@ export function PullRequestListPane(props: {
   );
   const health = useMemo(
     () => ({
-      error: listing.error,
-      projectErrors: data?.errors ?? [],
+      error: listing.error ? pullRequestFailureMessage(listing.error) : null,
+      projectErrors: (data?.errors ?? []).map((error) => ({
+        projectTitle: error.projectTitle,
+        message: pullRequestFailureMessage(error.message),
+      })),
       unconfigured: (data?.providers ?? []).filter((provider) => !provider.configured),
     }),
     [listing.error, data],
@@ -141,7 +148,10 @@ export function PullRequestListPane(props: {
     hasData: data !== null && data !== undefined,
     pending: listing.isPending,
     query,
+    searching: search.trim() !== query || listing.isPending,
     filterCount,
+    projectCount: props.projects.length,
+    pullRequestsSupported: props.pullRequestsSupported,
     health,
   });
 
@@ -178,29 +188,6 @@ export function PullRequestListPane(props: {
   // A further page is on its way: the rows already read stay up and the footer says so.
   const loadingMore = listing.isPending && entries.length > 0;
 
-  const sortActions = useMemo<MenuAction[]>(
-    () =>
-      PULL_REQUEST_SORT_OPTIONS.map((option) => ({
-        id: `sort:${option.value}`,
-        title: option.label,
-        state: filters.sort === option.value ? "on" : "off",
-      })),
-    [filters.sort],
-  );
-  const environmentActions = useMemo<MenuAction[]>(
-    () =>
-      props.environments.map((environment) => ({
-        id: `environment:${environment.environmentId}`,
-        title: environment.environmentLabel,
-        state: environment.environmentId === props.environmentId ? "on" : "off",
-      })),
-    [props.environments, props.environmentId],
-  );
-  const environmentLabel =
-    props.environments.find((item) => item.environmentId === props.environmentId)
-      ?.environmentLabel ?? "Environment";
-  const sortLabel = PULL_REQUEST_SORT_OPTIONS.find((o) => o.value === filters.sort)?.label;
-
   const clearSearch = () => {
     setSearch("");
     setQuery("");
@@ -215,7 +202,15 @@ export function PullRequestListPane(props: {
   const notices = status.kind === "rows" ? resolvePullRequestNotices(health) : [];
   const body =
     status.kind === "rows" ? null : status.kind === "loading" ? (
-      <ListSkeleton />
+      <ListSkeleton caption={status.caption} />
+    ) : status.kind === "unsupported" ? (
+      <PrStateMessage icon="arrow.triangle.pull" title={status.title} message={status.message} />
+    ) : status.kind === "no-projects" ? (
+      <PrStateMessage
+        icon="folder"
+        title="No projects in this environment"
+        message="Add a project, and the pull requests from its repository appear here."
+      />
     ) : status.kind === "error" || status.kind === "setup" ? (
       <PrStateMessage icon="arrow.triangle.pull" title={status.title} message={status.message}>
         <PrButton
@@ -263,63 +258,23 @@ export function PullRequestListPane(props: {
       </PrStateMessage>
     );
 
-  return (
+  const toolbar = (
+    <PullRequestListToolbar
+      onBack={props.onBack}
+      searchQuery={search}
+      onSearchQueryChange={setSearch}
+      filterCount={filterCount}
+      filterCustomized={filterCount > 0 || filters.sort !== DEFAULT_PULL_REQUEST_FILTERS.sort}
+      onOpenFilters={() => setSheetOpen(true)}
+      refreshing={refreshing}
+      onRefresh={() => void refresh()}
+    />
+  );
+
+  const { split, showDetailOnly, listWidth } = props.layout;
+  const list = (
     <View className="flex-1">
-      <View className="gap-2 px-3 pb-2 pt-2.5">
-        <SearchField
-          value={search}
-          onChange={setSearch}
-          busy={search.trim() !== query || (listing.isPending && query !== "")}
-        />
-        <View className="flex-row items-center gap-2">
-          <ControlPillMenu
-            actions={sortActions}
-            title="Sort loaded pull requests"
-            onPressAction={(event) => {
-              const value = PULL_REQUEST_SORT_OPTIONS.find(
-                (option) => `sort:${option.value}` === event.nativeEvent.event,
-              )?.value;
-              if (value) props.onFiltersChange({ sort: value });
-            }}
-          >
-            <PrToolbarButton
-              icon="arrow.up.arrow.down"
-              label="Sort"
-              accessibilityLabel={`Sort, ${sortLabel}`}
-              active={filters.sort !== DEFAULT_PULL_REQUEST_FILTERS.sort}
-            />
-          </ControlPillMenu>
-          <PrToolbarButton
-            icon="line.3.horizontal.decrease.circle"
-            label="Filters"
-            accessibilityLabel={filterCount > 0 ? `Filters, ${filterCount} active` : "Filters"}
-            active={filterCount > 0}
-            badge={filterCount}
-            onPress={() => setSheetOpen(true)}
-          />
-          {props.environments.length > 1 ? (
-            <ControlPillMenu
-              actions={environmentActions}
-              title="Environment"
-              className="min-w-0 shrink"
-              onPressAction={(event) => {
-                const id = event.nativeEvent.event.slice("environment:".length);
-                if (id !== props.environmentId) props.onEnvironmentChange(id);
-              }}
-            >
-              <PrToolbarButton
-                icon="server.rack"
-                label={environmentLabel}
-                accessibilityLabel={`Environment, ${environmentLabel}`}
-                showChevron
-              />
-            </ControlPillMenu>
-          ) : null}
-          <View className="flex-1" />
-          <RefreshButton refreshing={refreshing} onPress={() => void refresh()} />
-        </View>
-      </View>
-      <View className="flex-1 border-t border-border">
+      <View className="flex-1">
         {body ?? (
           <FlatList
             data={entries}
@@ -361,7 +316,9 @@ export function PullRequestListPane(props: {
                   props.selected !== null &&
                   props.selected.projectId === item.projectId &&
                   props.selected.repository === item.repository &&
-                  props.selected.number === item.number
+                  props.selected.number === item.number &&
+                  (props.selected.host === undefined ||
+                    props.selected.host.toLowerCase() === item.host.toLowerCase())
                 }
                 onSelect={props.onSelect}
               />
@@ -375,74 +332,55 @@ export function PullRequestListPane(props: {
         projects={props.projects}
         unavailable={unavailable}
         onChange={props.onFiltersChange}
+        environments={props.environments}
+        environmentId={props.environmentId}
+        onEnvironmentChange={props.onEnvironmentChange}
         onClose={() => setSheetOpen(false)}
       />
     </View>
   );
-}
 
-function SearchField(props: { value: string; onChange: (value: string) => void; busy: boolean }) {
-  const foreground = String(useUniwindTheme()["--color-foreground"]);
-  const placeholder = String(useUniwindTheme()["--color-placeholder"]);
-  const iconColor = String(useUniwindTheme()["--color-icon-subtle"]);
   return (
-    <View className="h-11 flex-row items-center gap-2 rounded-lg border border-input-border bg-input pl-3">
-      {props.busy ? (
-        <ActivityIndicator size="small" color={iconColor} />
-      ) : (
-        <SymbolView name="magnifyingglass" size={16} tintColor={iconColor} type="monochrome" />
-      )}
-      <TextInput
-        accessibilityLabel="Search pull requests"
-        placeholder="Search title, #number or author"
-        placeholderTextColor={placeholder}
-        value={props.value}
-        onChangeText={props.onChange}
-        maxLength={200}
-        autoCapitalize="none"
-        autoCorrect={false}
-        returnKeyType="search"
-        className="min-w-0 flex-1 py-0 font-t3-regular text-[15px]"
-        style={{ color: foreground }}
-      />
-      {props.value ? (
-        <Pressable
-          accessibilityLabel="Clear search"
-          accessibilityRole="button"
-          className="size-11 items-center justify-center"
-          onPress={() => props.onChange("")}
+    <>
+      {showDetailOnly ? null : toolbar}
+      {/* The rounded surface under the top bar, as on Home and in a thread. A phone's detail
+          draws its own bar and surface, so this one steps aside rather than nesting. */}
+      <View
+        className={
+          showDetailOnly
+            ? "flex-1 flex-row bg-header"
+            : "flex-1 flex-row overflow-hidden rounded-t-[28px] bg-screen"
+        }
+      >
+        <View
+          className={split ? "border-r border-border" : "flex-1"}
+          style={[
+            split ? { width: listWidth } : null,
+            { display: showDetailOnly ? "none" : "flex" },
+          ]}
         >
-          <SymbolView name="xmark.circle.fill" size={17} tintColor={iconColor} type="monochrome" />
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-function RefreshButton(props: { refreshing: boolean; onPress: () => void }) {
-  const iconColor = String(useUniwindTheme()["--color-icon"]);
-  return (
-    <Pressable
-      accessibilityLabel="Refresh pull requests"
-      accessibilityRole="button"
-      accessibilityState={{ busy: props.refreshing }}
-      disabled={props.refreshing}
-      onPress={props.onPress}
-      className="size-11 items-center justify-center rounded-lg border border-input-border bg-input active:bg-subtle-strong"
-    >
-      {props.refreshing ? (
-        <ActivityIndicator size="small" color={iconColor} />
-      ) : (
-        <SymbolView name="arrow.clockwise" size={16} tintColor={iconColor} type="monochrome" />
-      )}
-    </Pressable>
+          {list}
+        </View>
+        <View
+          className="min-w-0 flex-1"
+          style={{ display: split || props.selected ? "flex" : "none" }}
+        >
+          {props.detail}
+        </View>
+      </View>
+    </>
   );
 }
 
 /** Static placeholders in the row's own rhythm; nothing animates while the first page loads. */
-function ListSkeleton() {
+function ListSkeleton(props: { caption?: string | undefined }) {
   return (
-    <View accessibilityLabel="Loading pull requests" className="pt-1">
+    <View accessibilityLabel={props.caption ?? "Loading pull requests"} className="pt-1">
+      {props.caption ? (
+        <Text numberOfLines={1} className="px-4 pb-1 pt-2 text-xs text-foreground-tertiary">
+          {props.caption}
+        </Text>
+      ) : null}
       {[0, 1, 2, 3, 4, 5].map((index) => (
         <View key={index} className="flex-row gap-3 px-4 py-3.5">
           <View className="mt-0.5 size-4 rounded-full bg-subtle-strong" />
@@ -457,6 +395,10 @@ function ListSkeleton() {
   );
 }
 
+/**
+ * The desktop row on a phone: state icon, `#number` before the title with the checks glyph after
+ * it, then author and repository; the change size sits above the age on the right.
+ */
 const PullRequestRow = memo(function PullRequestRow(props: {
   entry: PullRequestListEntry;
   selected: boolean;
@@ -465,15 +407,24 @@ const PullRequestRow = memo(function PullRequestRow(props: {
   const { entry } = props;
   const scheme = useColorScheme() === "dark" ? "dark" : "light";
   const presentation = resolvePullRequestPresentation(entry, scheme);
+  const checksColor = useChecksToneColor();
   const hasStats = entry.additions > 0 || entry.deletions > 0;
+  const checks =
+    entry.checksState === "passing"
+      ? { icon: "checkmark.circle" as const, tone: "success" as const }
+      : entry.checksState === "failing"
+        ? { icon: "xmark.circle" as const, tone: "failure" as const }
+        : entry.checksState === "pending"
+          ? { icon: "clock" as const, tone: "pending" as const }
+          : null;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${presentation.label} pull request ${entry.number}: ${entry.title}, ${entry.repository}${entry.viewerReviewRequested ? ", review requested" : ""}`}
+      accessibilityLabel={`${presentation.label} pull request ${entry.number}: ${entry.title}, ${entry.repository}${entry.checksState ? `, checks ${entry.checksState}` : ""}${entry.viewerReviewRequested ? ", review requested" : ""}`}
       accessibilityState={{ selected: props.selected }}
       onPress={() => props.onSelect(entry)}
       className={cn(
-        "min-h-16 flex-row gap-3 border-b border-border px-4 py-3",
+        "mx-1 min-h-16 flex-row gap-3 rounded-2xl px-3 py-3",
         props.selected ? "bg-subtle-strong" : "active:bg-subtle",
       )}
     >
@@ -485,38 +436,50 @@ const PullRequestRow = memo(function PullRequestRow(props: {
           type="monochrome"
         />
       </View>
-      <View className="min-w-0 flex-1 gap-0.5">
+      <View className="min-w-0 flex-1 gap-1">
         <Text
           numberOfLines={2}
           className="text-[15px] font-t3-medium leading-[20px] text-foreground"
         >
+          <Text className="text-[13px] text-foreground-tertiary">#{entry.number} </Text>
           {entry.title}
         </Text>
-        <Text numberOfLines={1} className="text-[13px] text-foreground-muted">
-          <Text className="text-[13px] text-foreground-secondary">{entry.repository}</Text>
-          {` #${entry.number}`}
-        </Text>
-        <Text numberOfLines={1} className="text-xs text-foreground-tertiary">
-          {entry.author?.login ?? "ghost"}
-          {" · "}
-          {entry.headBranch}
-          {presentation.label === "Open" ? "" : ` · ${presentation.label}`}
-        </Text>
-        {entry.viewerReviewRequested && entry.state === "open" ? (
-          <Text className="pt-0.5 text-xs font-t3-medium text-foreground-secondary">
-            Review requested
+        <View className="flex-row items-center gap-1.5">
+          {checks ? (
+            <SymbolView
+              name={checks.icon}
+              size={13}
+              tintColor={checksColor(checks.tone)}
+              type="monochrome"
+            />
+          ) : null}
+          <Text numberOfLines={1} className="min-w-0 shrink text-[13px] text-foreground-muted">
+            {entry.author?.login ?? "ghost"}
+            <Text className="text-[13px] text-foreground-tertiary">{`  ${entry.repository}`}</Text>
+          </Text>
+        </View>
+        {(entry.viewerReviewRequested && entry.state === "open") ||
+        (presentation.label !== "Open" && presentation.label !== "Draft") ? (
+          <Text className="text-xs font-t3-medium text-foreground-secondary">
+            {[
+              presentation.label !== "Open" && presentation.label !== "Draft"
+                ? presentation.label
+                : null,
+              entry.viewerReviewRequested && entry.state === "open" ? "Review requested" : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </Text>
         ) : null}
       </View>
-      <View className="items-end gap-0.5 pt-0.5">
-        <Text className="text-xs text-foreground-tertiary">{relativeTime(entry.updatedAt)}</Text>
+      <View className="items-end gap-1 pt-0.5">
         {hasStats ? (
-          <Text className="text-xs">
-            <Text className="text-xs text-primary-text">+{entry.additions}</Text>
-            <Text className="text-xs text-foreground-tertiary"> </Text>
-            <Text className="text-xs text-danger-foreground">-{entry.deletions}</Text>
+          <Text className="font-mono text-xs">
+            <Text className="font-mono text-xs text-primary-text">+{entry.additions}</Text>
+            <Text className="font-mono text-xs text-danger-foreground"> -{entry.deletions}</Text>
           </Text>
         ) : null}
+        <Text className="text-xs text-foreground-tertiary">{relativeTime(entry.updatedAt)}</Text>
       </View>
     </Pressable>
   );

@@ -87,6 +87,8 @@ export function ComposerContextSheet(props: {
   readonly onRemove?: () => void;
   readonly onOpenAttachment?: () => void;
   readonly onOpenPullRequest?: () => void;
+  /** Opens a pull request link in the native viewer; the browser is used when this is absent. */
+  readonly onOpenPullRequestUrl?: (url: string) => Promise<boolean>;
   readonly skillDescription?: string;
   readonly onOpenSkill?: () => void;
   readonly onOpenThread?: (thread: ScopedThreadRef) => void;
@@ -410,9 +412,17 @@ export function ComposerContextSheet(props: {
               <Pressable
                 accessibilityRole="link"
                 onPress={() => {
-                  void Linking.openURL(pullRequestUrl).catch(() =>
-                    Alert.alert("Could not open pull request", "Try again when connected."),
-                  );
+                  const open =
+                    props.onOpenPullRequestUrl ??
+                    ((url: string) =>
+                      Linking.openURL(url).then(
+                        () => true,
+                        () => false,
+                      ));
+                  void open(pullRequestUrl).then((opened) => {
+                    if (!opened)
+                      Alert.alert("Could not open pull request", "Try again when connected.");
+                  });
                 }}
                 className="rounded-xl bg-subtle p-4"
               >

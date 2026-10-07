@@ -1,3 +1,13 @@
+# T3 Code Mobile
+
+Personal mobile-focused fork of [T3 Code](https://github.com/pingdotgg/t3code).
+
+This fork includes an expandable composer with keyboard and safe-area handling for iOS and Android, plus a native pull request viewer with saved filters, direct links from threads, and PR actions.
+
+The full monorepo stays here because the mobile client builds against its shared runtime and contracts. See [mobile setup and custom builds](apps/mobile/README.md) and the [mobile PR viewer guide](docs/user/mobile-pull-requests.md).
+
+## Upstream project
+
 # T3 Code
 
 T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).

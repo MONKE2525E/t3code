@@ -188,8 +188,11 @@ is optional, as with other source builds. Direct LAN and tailnet pairing work
 without a cloud account.
 
 The Pull requests button on Home and in the sidebar opens the native viewer.
-Thread Git controls open supported GitHub PR URLs in-app; other host URLs retain
-the external browser fallback. The viewer shares desktop's list, detail,
+Pull request links in chat, linked pull requests, context chips and Thread Git
+controls open in-app when the link is a pull request URL for a repository on the
+thread's environment, resolved with the same shared reader and project matching as
+desktop. Any other link, and any host or repository the environment does not
+hold, opens externally as before. The viewer shares desktop's list, detail,
 activity, and paginated diff queries, with Summary, Timeline, and Code tabs.
 On wider screens its own PR list replaces the thread sidebar, leaving space
 for the selected PR. Comment and review controls follow host capabilities and

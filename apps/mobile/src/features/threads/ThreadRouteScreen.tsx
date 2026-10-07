@@ -54,6 +54,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
+import { useOpenPullRequest } from "../pull-requests/useOpenPullRequest";
 import {
   buildTerminalMenuSessions,
   nextOpenTerminalId,
@@ -545,6 +546,7 @@ function ThreadRouteContent(
     [selectedThread?.environmentId, selectedThreadCwd],
   );
   const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
+  const openPullRequest = useOpenPullRequest();
 
   const handleOpenGitInspector = useCallback(() => {
     if (!fileInspector.supported) {
@@ -1036,7 +1038,13 @@ function ThreadRouteContent(
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = () => (
     <>
-      <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
+      <GitActionProgressOverlay
+        progress={gitActionProgress}
+        onDismiss={dismissGitActionResult}
+        onOpenPullRequest={(url) =>
+          void openPullRequest(url, String(environmentId), "pull-request", threadId ?? undefined)
+        }
+      />
 
       <View className="flex-1 bg-screen android:overflow-hidden android:rounded-t-[28px] android:bg-thread-canvas">
         <ThreadDetailScreen

@@ -4,7 +4,15 @@ import type {
   PullRequestReviewVerdict,
 } from "@t3tools/contracts";
 import { useState } from "react";
-import { ActivityIndicator, Alert, FlatList, Pressable, TextInput, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  TextInput,
+  View,
+} from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -14,6 +22,7 @@ import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { EnvironmentQueryView } from "../../state/query";
 import { FileMarkdownPreview } from "../files/FileMarkdownPreview";
+import { pullRequestFailureMessage } from "./pull-request-model";
 import { PrButton, PrChoice, PrNotice, PrStateMessage } from "./pull-request-components";
 import type { PullRequestComposerState } from "./usePullRequestComposer";
 
@@ -74,7 +83,7 @@ function Commits(props: { commits: PullRequestActivity["commits"] }) {
   );
 }
 
-function CommentItem(props: { item: PullRequestComment }) {
+function CommentItem(props: { item: PullRequestComment; onLinkPress: (href: string) => void }) {
   const { item } = props;
   const login = item.author?.login ?? "ghost";
   const review = reviewStateLabel(item.reviewState);
@@ -104,7 +113,11 @@ function CommentItem(props: { item: PullRequestComment }) {
         </Text>
       ) : null}
       <View style={{ minHeight: 65 }}>
-        <FileMarkdownPreview embedded markdown={item.body || "_No comment body._"} />
+        <FileMarkdownPreview
+          embedded
+          markdown={item.body || "_No comment body._"}
+          onLinkPress={props.onLinkPress}
+        />
       </View>
     </View>
   );
@@ -206,17 +219,22 @@ export function PullRequestTimelineTab(props: {
   canComment: boolean;
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
   target: string;
+  refreshing: boolean;
+  onRefresh: () => void;
+  /** Opens a link in a comment, natively when it names a pull request. */
+  onLinkPress: (href: string) => void;
 }) {
   const { activity } = props;
   const data = activity.data;
+  const refreshColor = String(useUniwindTheme()["--color-icon"]);
   return (
     <KeyboardAvoidingView automaticOffset behavior="padding" className="min-h-0 flex-1">
       {data === null ? (
         activity.error ? (
           <PrStateMessage
             icon="text.bubble"
-            title="Could not load the conversation"
-            message={activity.error}
+            title="Could not load pull request activity"
+            message={pullRequestFailureMessage(activity.error)}
           >
             <PrButton label="Retry" icon="arrow.clockwise" onPress={activity.refresh} />
           </PrStateMessage>
@@ -230,13 +248,22 @@ export function PullRequestTimelineTab(props: {
           keyExtractor={(item) => item.id}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
+          refreshControl={
+            <RefreshControl
+              refreshing={props.refreshing}
+              onRefresh={props.onRefresh}
+              tintColor={refreshColor}
+            />
+          }
           contentContainerStyle={{ paddingBottom: 8 }}
           ListHeaderComponent={
             <>
               {activity.error ? (
                 <View className="pt-2">
                   <PrNotice
-                    lines={[activity.error]}
+                    lines={[
+                      `${pullRequestFailureMessage(activity.error)} Showing the last activity loaded.`,
+                    ]}
                     actionLabel="Retry"
                     onAction={activity.refresh}
                   />
@@ -262,7 +289,7 @@ export function PullRequestTimelineTab(props: {
               <ActivityIndicator className="m-4" />
             ) : undefined
           }
-          renderItem={({ item }) => <CommentItem item={item} />}
+          renderItem={({ item }) => <CommentItem item={item} onLinkPress={props.onLinkPress} />}
         />
       )}
       <Composer

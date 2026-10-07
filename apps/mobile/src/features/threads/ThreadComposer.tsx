@@ -56,6 +56,7 @@ import {
   COMPOSER_TRANSITION_DURATION_MS,
 } from "./composerLayoutTransition";
 import { SymbolView } from "../../components/AppSymbol";
+import { useOpenPullRequest } from "../pull-requests/useOpenPullRequest";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -390,6 +391,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
   const navigation = useNavigation();
+  const openPullRequest = useOpenPullRequest();
   const foregroundColor = useUniwindTheme()["--color-foreground"];
   const bodyText = useScaledTextRole("body");
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
@@ -943,6 +945,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     path: fileRoutePathSegments(path),
                   });
                 }}
+                onOpenPullRequest={(url) =>
+                  openPullRequest(
+                    url,
+                    String(props.environmentId),
+                    "pull-request",
+                    String(props.selectedThread.id),
+                  )
+                }
                 onOpenAttachment={openDraftDocument}
                 // A rested composer full of chips left almost nowhere to tap to start typing:
                 // every chip opened its file instead. Collapsed, they focus the editor.

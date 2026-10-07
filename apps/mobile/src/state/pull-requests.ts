@@ -1,4 +1,7 @@
-import { createPullRequestEnvironmentAtoms } from "@t3tools/client-runtime/state/pull-requests";
+import {
+  createPullRequestEnvironmentAtoms,
+  createPullRequestStackAtomFamily,
+} from "@t3tools/client-runtime/state/pull-requests";
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import { WS_METHODS } from "@t3tools/contracts";
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -17,3 +20,9 @@ export const composerPullRequests = {
 };
 
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime);
+
+/** The host-native stack a pull request belongs to; null where it is not stacked. */
+export const pullRequestStack = createPullRequestStackAtomFamily(
+  connectionAtomRuntime,
+  pullRequestEnvironment.refreshes,
+);
