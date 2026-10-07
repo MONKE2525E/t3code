@@ -58,7 +58,6 @@ import {
 } from "react";
 import {
   Alert,
-  AppState,
   Keyboard,
   Platform,
   useWindowDimensions,
@@ -66,11 +65,7 @@ import {
   type GestureResponderEvent,
   type ViewInstance,
 } from "react-native";
-import {
-  KeyboardController,
-  KeyboardStickyView,
-  useKeyboardState,
-} from "react-native-keyboard-controller";
+import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import Animated, {
   Easing,
   FadeInDown,
@@ -137,6 +132,9 @@ import {
   COMPOSER_TRANSITION_DURATION_MS,
   ThreadComposer,
 } from "./ThreadComposer";
+import { ComposerKeyboardDock, useComposerFullscreen } from "./ComposerKeyboardDock";
+import { useComposerKeyboardEnabled } from "./useComposerKeyboardEnabled";
+import { COMPOSER_FULLSCREEN_TRANSITION } from "./composerLayoutTransition";
 import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
@@ -355,37 +353,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
-  // Android can swallow the IME hide callbacks when the app is backgrounded
-  // mid keyboard-hide (the reported repro: send — which blurs and starts the
-  // hide — then Home within a second). The keyboard library's height AND
-  // visibility then stay frozen open, so gating the sticky translation on
-  // visibility alone still strands the composer after resume. Quarantine the
-  // translation on every Android resume instead; any sign of a live keyboard
-  // stream — an owned input gaining focus, or any visibility/height movement —
-  // lifts it. A healthy resume sees no visual difference (the translation is
-  // already zero while the keyboard is closed).
-  const [keyboardStateSuspect, setKeyboardStateSuspect] = useState(false);
-  useEffect(() => {
-    if (Platform.OS !== "android") {
-      return;
-    }
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") {
-        setKeyboardStateSuspect(true);
-      }
-    });
-    return () => {
-      subscription.remove();
-    };
-  }, []);
-  useEffect(() => {
-    setKeyboardStateSuspect(false);
-  }, [isKeyboardVisible, liveKeyboardHeight]);
-  const handleOwnedInputFocusChange = useCallback((focused: boolean) => {
-    if (focused) {
-      setKeyboardStateSuspect(false);
-    }
-  }, []);
+  const { enabled: keyboardDockEnabled, onInputFocusChange: handleOwnedInputFocusChange } =
+    useComposerKeyboardEnabled();
   const windowHeight = useWindowDimensions().height;
   const navigationHeaderHeight = useContext(HeaderHeightContext) || insets.top + 44;
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
@@ -419,30 +388,16 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const selectedThreadKeyRef = useRef(selectedThreadKey);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
-  const [composerFocused, setComposerFocused] = useState(false);
-  const handleComposerFocusChange = useCallback(
-    (focused: boolean) => {
-      setComposerFocused(focused);
-      handleOwnedInputFocusChange(focused);
-    },
-    [handleOwnedInputFocusChange],
-  );
+  const composerFullscreenController = useComposerFullscreen();
+  const composerFullscreen = composerFullscreenController.isFullscreen;
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
-  // Android keys the safe-area padding on keyboard visibility (#5988): the
-  // back gesture closes the keyboard while the editor stays focused, and a
-  // focus-keyed inset would leave the toolbar under the gesture bar. iOS must
-  // NOT use visibility — it only flips on keyboardDidHide, after the hide
-  // animation, so the composer would ride down flush to the screen edge and
-  // then snap up into the inset. On iOS blur precedes the hide, so the
-  // focus-keyed inset is already in place while the composer rides down.
-  // Dictation keeps that focus while the composer switches to its compact pill.
-  const composerBottomInset = (
-    Platform.OS === "android" ? isKeyboardVisible : composerExpanded || composerFocused
-  )
-    ? 0
-    : Math.max(insets.bottom, 12);
+  // iOS keeps the safe-area padding even when a hardware keyboard leaves the editor focused.
+  // The dock cancels it with native keyboard progress when the software keyboard rises, so the
+  // card reaches the keyboard without a visibility-driven jump at the end of its animation.
+  const composerBottomInset =
+    Platform.OS === "android" && isKeyboardVisible ? 0 : Math.max(insets.bottom, 12);
   const contentPresentationKind = props.contentPresentation.kind;
   // The raw sync status enters "synchronizing" on every full fetch, cached or
   // not. Whether messages are already on screen decides the pill label: no
@@ -838,9 +793,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
-    // A replaced or unmounted native editor may not emit a blur event.
-    setComposerFocused(false);
-  }, [selectedThreadKey, showContent]);
+  }, [selectedThreadKey]);
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const lastDispatchedVisitRef = useRef<string | null>(null);
@@ -1161,63 +1114,85 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         />
       ) : null}
 
-      {/* Floating composer — sticks to keyboard via KeyboardStickyView */}
+      {/* Floating composer — sticks to the keyboard; fullscreen fills the viewport above it */}
       {showContent ? (
-        <KeyboardStickyView
-          // iOS emits a native animated height target on both will-show and
-          // will-hide, so stay subscribed for the full transition. Android
-          // retains its background/resume stale-state quarantine.
-          enabled={Platform.OS === "ios" || (isKeyboardVisible && !keyboardStateSuspect)}
+        <ComposerKeyboardDock
+          enabled={keyboardDockEnabled}
+          animateLayout={composerFullscreenController.isAnimating}
+          fullscreen={composerFullscreen}
+          // Android lays the feed out below its in-screen header; iOS draws under the native one.
+          fullscreenTop={Platform.OS === "ios" ? navigationHeaderHeight : 0}
+          // Rotation can leave JS visibility hidden while the native keyboard stream is open.
+          // Cancel the closed-keyboard padding with that stream so the card stays at the IME edge.
+          openedOffset={composerBottomInset}
           pointerEvents="box-none"
           style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}
-          offset={{ closed: 0, opened: 0 }}
         >
           {/* The fixed sticky host gives this bottom-anchored child a stable
               coordinate space. Its top and height can then animate together
               instead of the auto-sized host jumping to Yoga's destination. */}
           <Animated.View
-            layout={COMPOSER_LAYOUT_TRANSITION}
+            layout={
+              composerFullscreenController.isAnimating
+                ? COMPOSER_FULLSCREEN_TRANSITION
+                : COMPOSER_LAYOUT_TRANSITION
+            }
             pointerEvents="box-none"
-            style={[{ position: "absolute", bottom: 0, left: 0 }, composerWidthStyle]}
+            style={[
+              { position: "absolute", bottom: 0, left: 0 },
+              composerFullscreen ? { top: 0 } : null,
+              composerWidthStyle,
+            ]}
           >
             {/* No paddingTop here: the overlay's measured height becomes the
                 list's bottom inset, so any padding above the pill/composer
                 pushes the resting content floor up by the same amount. */}
-            <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
-              <FloatingWorkingControl
-                colorScheme={isDarkMode ? "dark" : "light"}
-                status={floatingStatus}
-                lift={floatingControlLift}
-                devicePreview={
-                  devicePreviews.length > 0
-                    ? { count: devicePreviews.length, onPress: openDevicePreview }
-                    : null
-                }
-                browserPreview={
-                  browserTabs.tabs.length > 0
-                    ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
-                    : null
-                }
-                showScrollToEnd={showScrollToEndButton}
-                onScrollToEnd={handleScrollToEnd}
-                agents={agentsSegment}
-                onOpenAgents={() => {
-                  Keyboard.dismiss();
-                  navigation.navigate("ThreadAgents", {
-                    environmentId: props.environmentId,
-                    threadId: props.selectedThread.id,
-                  });
-                }}
-                queuedCount={queuedCount}
-                onOpenQueue={() => {
-                  Keyboard.dismiss();
-                  navigation.navigate("ThreadQueue", {
-                    environmentId: props.environmentId,
-                    threadId: props.selectedThread.id,
-                  });
-                }}
-              />
-              <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+            <View
+              ref={composerOverlayRef}
+              // The feed inset follows the resting composer, not the fullscreen editor
+              // that covers it, so it keeps its last measured height until collapse.
+              onLayout={composerFullscreen ? undefined : onComposerLayout}
+              className={composerFullscreen ? "w-full flex-1" : "w-full"}
+            >
+              <View style={composerFullscreen ? { display: "none" } : undefined}>
+                <FloatingWorkingControl
+                  colorScheme={isDarkMode ? "dark" : "light"}
+                  status={floatingStatus}
+                  lift={floatingControlLift}
+                  devicePreview={
+                    devicePreviews.length > 0
+                      ? { count: devicePreviews.length, onPress: openDevicePreview }
+                      : null
+                  }
+                  browserPreview={
+                    browserTabs.tabs.length > 0
+                      ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
+                      : null
+                  }
+                  showScrollToEnd={showScrollToEndButton}
+                  onScrollToEnd={handleScrollToEnd}
+                  agents={agentsSegment}
+                  onOpenAgents={() => {
+                    Keyboard.dismiss();
+                    navigation.navigate("ThreadAgents", {
+                      environmentId: props.environmentId,
+                      threadId: props.selectedThread.id,
+                    });
+                  }}
+                  queuedCount={queuedCount}
+                  onOpenQueue={() => {
+                    Keyboard.dismiss();
+                    navigation.navigate("ThreadQueue", {
+                      environmentId: props.environmentId,
+                      threadId: props.selectedThread.id,
+                    });
+                  }}
+                />
+              </View>
+              <View
+                className="w-full self-center"
+                style={{ maxWidth: contentMaxWidth, display: composerFullscreen ? "none" : "flex" }}
+              >
                 {props.queuedRunEdit !== null ? (
                   <Animated.View
                     className="shrink-0"
@@ -1336,7 +1311,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 style={
                   activeUserInputRequestId !== null || props.creationState?.kind === "failed"
                     ? { display: "none" }
-                    : undefined
+                    : composerFullscreen
+                      ? { flex: 1 }
+                      : undefined
                 }
               >
                 {isProviderSubagent ? (
@@ -1424,14 +1401,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                       onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
                       onExpandedChange={setComposerExpanded}
-                      onEditorFocusChange={handleComposerFocusChange}
+                      fullscreen={composerFullscreenController}
+                      onEditorFocusChange={handleOwnedInputFocusChange}
                     />
                   </>
                 )}
               </View>
             </View>
           </Animated.View>
-        </KeyboardStickyView>
+        </ComposerKeyboardDock>
       ) : null}
     </View>
   );
