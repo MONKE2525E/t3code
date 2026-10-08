@@ -183,9 +183,9 @@ and pair your existing environment through Add environment.
 
 The script stores its signing key and password in `~/.local/share/t3-custom-mobile`
 outside the checkout. Keep that directory private and backed up: future APKs need
-the same key to update an existing installation. Public T3 Connect configuration
-is optional, as with other source builds. Direct LAN and tailnet pairing work
-without a cloud account.
+the same key to update an existing installation. The build requires public T3 Connect
+configuration so updates cannot silently disable cloud routes. Use `--offline-only`
+explicitly for a LAN/tailnet-only APK without cloud sign-in.
 
 Custom APKs check [this fork's releases](https://github.com/MONKE2525E/t3code/releases)
 at launch and when returning to the app after 15 minutes. Settings > About > Check

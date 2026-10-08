@@ -1,7 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { SupervisorConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useState, type ReactNode } from "react";
 import {
+  ActivityIndicator,
   Alert,
   AccessibilityInfo,
   Animated,
@@ -19,9 +24,14 @@ import {
   CompactBrandTitle,
   getCompactBrandHeaderOptions,
 } from "../../components/CompactBrandTitle";
+import { environmentCatalog } from "../../connection/catalog";
 import { threadListEnvironmentsAtom } from "../../state/server";
 import { useWorkspaceState } from "../../state/workspace";
-import { workspaceDeviceStatuses, type WorkspaceDeviceStatus } from "./workspace-connection-status";
+import {
+  workspaceDeviceStatuses,
+  type WorkspaceDeviceBadge,
+  type WorkspaceDeviceStatus,
+} from "./workspace-connection-status";
 
 /**
  * Delay before a connection interruption surfaces in the title slot. Sub-second
@@ -30,6 +40,18 @@ import { workspaceDeviceStatuses, type WorkspaceDeviceStatus } from "./workspace
 const STATUS_SHOW_DELAY_MS = 800;
 const FADE_IN_MS = 250;
 const BADGE_IN_MS = 180;
+const INDICATOR_LAYOUT_SIZE = 20;
+
+const supervisorPhasesAtom = Atom.make((get) => {
+  const phases = new Map<EnvironmentId, SupervisorConnectionPhase>();
+  for (const environmentId of get(environmentCatalog.catalogValueAtom).entries.keys()) {
+    const state = AsyncResult.value(get(environmentCatalog.stateAtom(environmentId)));
+    if (Option.isSome(state)) {
+      phases.set(environmentId, state.value.phase);
+    }
+  }
+  return phases;
+}).pipe(Atom.withLabel("home:workspace-supervisor-phases"));
 
 /**
  * Debounce brief interruptions; hide device status immediately on recovery.
@@ -99,7 +121,11 @@ function StatusFadeIn(props: {
 }
 
 /** Plays once when mounted, so it only animates on the transition into a not-connected state. */
-function DeviceStatusBadge(props: { readonly diameter: number; readonly reducedMotion: boolean }) {
+function DeviceStatusBadge(props: {
+  readonly kind: Exclude<WorkspaceDeviceBadge, "none">;
+  readonly diameter: number;
+  readonly reducedMotion: boolean;
+}) {
   const [progress] = useState(() => new Animated.Value(props.reducedMotion ? 1 : 0));
 
   useEffect(() => {
@@ -128,15 +154,34 @@ function DeviceStatusBadge(props: { readonly diameter: number; readonly reducedM
       }}
     >
       <View
-        className="items-center justify-center bg-danger"
+        className={
+          props.kind === "failed"
+            ? "items-center justify-center bg-danger"
+            : "items-center justify-center bg-card"
+        }
         style={{ borderRadius: props.diameter / 2, height: props.diameter, width: props.diameter }}
       >
-        <SymbolView
-          name="xmark"
-          size={Math.round(props.diameter * 0.7)}
-          tintColorClassName="accent-danger-foreground"
-          type="monochrome"
-        />
+        {props.kind === "failed" ? (
+          <SymbolView
+            name="xmark"
+            size={Math.round(props.diameter * 0.7)}
+            tintColorClassName="accent-danger-foreground"
+            type="monochrome"
+          />
+        ) : props.reducedMotion ? (
+          <SymbolView
+            name="arrow.clockwise"
+            size={Math.round(props.diameter * 0.7)}
+            tintColorClassName="accent-icon"
+            type="monochrome"
+          />
+        ) : (
+          <ActivityIndicator
+            colorClassName="accent-icon"
+            size="small"
+            style={{ transform: [{ scale: props.diameter / INDICATOR_LAYOUT_SIZE }] }}
+          />
+        )}
       </View>
     </Animated.View>
   );
@@ -159,14 +204,21 @@ function DeviceStatusIcon(props: {
         alignItems: "center",
         justifyContent: "center",
       }}
-      onPress={() => Alert.alert(device.label, device.statusLabel)}
+      onPress={() =>
+        Alert.alert(
+          device.label,
+          device.traceId
+            ? `${device.statusLabel}\n\nTrace ID: ${device.traceId}`
+            : device.statusLabel,
+        )
+      }
     >
       <EnvironmentMachineSymbol
         kind={device.machineKind}
         size={props.size}
         tintColorClassName={device.isConnected ? "accent-icon" : "accent-icon-muted"}
       />
-      {device.isConnected ? null : (
+      {device.badge === "none" ? null : (
         <View
           pointerEvents="none"
           style={{
@@ -180,6 +232,7 @@ function DeviceStatusIcon(props: {
           }}
         >
           <DeviceStatusBadge
+            kind={device.badge}
             diameter={Math.round(props.size * 0.6)}
             reducedMotion={props.reducedMotion}
           />
@@ -216,6 +269,7 @@ export function WorkspaceConnectionTitle(props: {
 }) {
   const { state, environments } = useWorkspaceState();
   const { machineByEnvironmentId } = useAtomValue(threadListEnvironmentsAtom);
+  const phaseByEnvironmentId = useAtomValue(supervisorPhasesAtom);
   const reducedMotion = useReducedMotionPreference();
   const size = props.size ?? "navbar";
   const { scale } = useAndroidControlSizing();
@@ -223,6 +277,7 @@ export function WorkspaceConnectionTitle(props: {
   const devices = workspaceDeviceStatuses(
     environments,
     machineByEnvironmentId,
+    phaseByEnvironmentId,
     state.networkStatus,
   );
   const showsDevices = useDelayedDeviceStatus(devices.some((device) => !device.isConnected));

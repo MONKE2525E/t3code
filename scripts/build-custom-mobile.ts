@@ -8,19 +8,30 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+
+import { assertCustomMobileCloudConfig } from "./lib/custom-mobile-config.ts";
+import { loadRepoEnv, resolvePublicConfig } from "./lib/public-config.ts";
 
 const hostPlatform = Effect.runSync(HostProcessPlatform);
 const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
+const repoEnv = loadRepoEnv({ repoRoot: root });
+assertCustomMobileCloudConfig(
+  resolvePublicConfig(repoEnv),
+  process.argv.includes("--offline-only"),
+);
 const mobile = NodePath.join(root, "apps/mobile");
 const signingDir = NodePath.join(NodeOS.homedir(), ".local/share/t3-custom-mobile");
 const keyPath = NodePath.join(signingDir, "release.keystore");
 const passwordPath = NodePath.join(signingDir, "password");
 const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
-const buildNumber = process.env.T3CODE_MOBILE_BUILD_NUMBER ?? String(Math.floor(Date.now() / 1000));
+const buildNumber =
+  process.env.T3CODE_MOBILE_BUILD_NUMBER ??
+  String(Math.floor(Effect.runSync(Clock.currentTimeMillis) / 1000));
 if (!sdk) throw new Error("Set ANDROID_HOME to your Android SDK directory.");
 const env = {
-  ...process.env,
+  ...repoEnv,
   ...(process.env.JAVA_HOME
     ? {
         PATH: `${NodePath.join(process.env.JAVA_HOME, "bin")}${NodePath.delimiter}${process.env.PATH ?? ""}`,
