@@ -1,46 +1,47 @@
-import type { WorkspaceState } from "../../state/workspaceModel";
+import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
 
-export interface WorkspaceConnectionStatusPresentation {
+import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
+
+export interface WorkspaceDeviceStatus {
+  readonly environmentId: EnvironmentId;
   readonly label: string;
-  /** True while actively working (connecting/syncing) — render a spinner. False for offline/error/idle states — render a wifi-slash icon. */
-  readonly showsProgress: boolean;
+  readonly machineKind: EnvironmentMachineKind;
+  readonly isConnected: boolean;
+  /** Untruncated, for the tap reveal. */
+  readonly statusLabel: string;
 }
 
-function shouldShowWorkspaceConnectionStatus(state: WorkspaceState): boolean {
-  return (
-    state.networkStatus === "offline" ||
-    state.connectionError !== null ||
-    state.hasConnectingEnvironment ||
-    state.hasPendingShellSnapshot ||
-    (state.hasLoadedShellSnapshot && !state.hasReadyEnvironment)
-  );
+function deviceStatusLabel(environment: WorkspaceEnvironment): string {
+  switch (environment.connectionState) {
+    case "connected":
+      return "Connected";
+    case "connecting":
+      return "Connecting";
+    case "reconnecting":
+      return "Reconnecting";
+    case "offline":
+      return "Offline";
+    case "error":
+      return environment.connectionError ?? "Connection failed";
+    case "unsupported":
+      return environment.connectionError ?? "Unsupported";
+    case "available":
+      return "Not connected";
+  }
 }
 
-function workspaceConnectionStatusLabel(state: WorkspaceState): string {
-  if (state.networkStatus === "offline") return "You are offline";
-  if (state.connectingEnvironments.length === 1) {
-    return `Reconnecting to ${state.connectingEnvironments[0]!.environmentLabel}`;
-  }
-  if (state.connectingEnvironments.length > 1) {
-    return `Reconnecting ${state.connectingEnvironments.length} environments`;
-  }
-  if (state.connectionError !== null) return state.connectionError;
-  if (state.hasPendingShellSnapshot) {
-    return state.hasLoadedShellSnapshot ? "Syncing threads..." : "Loading threads...";
-  }
-  return "Not connected";
-}
-
-/** Header-title presentation of the connection state, or null while connected. */
-export function workspaceConnectionStatusPresentation(
-  state: WorkspaceState,
-): WorkspaceConnectionStatusPresentation | null {
-  if (!shouldShowWorkspaceConnectionStatus(state)) return null;
-  return {
-    label: workspaceConnectionStatusLabel(state),
-    showsProgress:
-      state.networkStatus !== "offline" &&
-      state.connectionError === null &&
-      (state.connectingEnvironments.length > 0 || state.hasPendingShellSnapshot),
-  };
+export function workspaceDeviceStatuses(
+  environments: ReadonlyArray<WorkspaceEnvironment>,
+  machineByEnvironmentId: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>,
+  networkStatus: WorkspaceState["networkStatus"] = "online",
+): ReadonlyArray<WorkspaceDeviceStatus> {
+  return environments
+    .filter((environment) => environment.isEnabled)
+    .map((environment) => ({
+      environmentId: environment.environmentId,
+      label: environment.environmentLabel,
+      machineKind: machineByEnvironmentId.get(environment.environmentId) ?? "server",
+      isConnected: networkStatus !== "offline" && environment.connectionState === "connected",
+      statusLabel: networkStatus === "offline" ? "Offline" : deviceStatusLabel(environment),
+    }));
 }
