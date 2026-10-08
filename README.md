@@ -6,6 +6,32 @@ This fork includes an expandable composer with keyboard and safe-area handling f
 
 The full monorepo stays here because the mobile client builds against its shared runtime and contracts. See [mobile setup and custom builds](apps/mobile/README.md) and the [mobile PR viewer guide](docs/user/mobile-pull-requests.md).
 
+## Open indicator threads on Android
+
+The Fold 7 Agent Activity Indicator can open `https://<host>.ts.net[:port]/<environmentId>/<threadId>` directly in this app. Pair the environment in the mobile app first. Links use that saved connection, including its existing direct, tailnet, or tunnel settings. Missing connections and unknown threads show an in-app message.
+
+On the phone, open **Settings > Apps > T3 Code Custom > Open by default > Add link**, then enable the `*.ts.net` link. Some Android versions call this **Open supported links** or list individual supported addresses. These domains are deliberately unverified, so Android 12 and newer require this one-time choice. If the phone does not offer the domain, select this app explicitly in the indicator's "Open threads in" setting or use `t3code://thread/<environmentId>/<threadId>` instead. Encode each ID separately with `encodeURIComponent`, including any slash inside an ID.
+
+Choose the matching package in the indicator:
+
+| Build                                                | Android package                |
+| ---------------------------------------------------- | ------------------------------ |
+| Custom signed APK, including custom debug/dev builds | `com.monke2525e.t3code.custom` |
+| Development without `T3CODE_ANDROID_CUSTOM=1`        | `com.t3tools.t3code.dev`       |
+| Preview without `T3CODE_ANDROID_CUSTOM=1`            | `com.t3tools.t3code.preview`   |
+| Production without `T3CODE_ANDROID_CUSTOM=1`         | `com.t3tools.t3code`           |
+
+The custom package stays the same across debug and release build types. A debug signing key cannot update a release APK signed with the custom release key. The custom scheme can be claimed by several installed variants, so setting an explicit package in the indicator avoids an app chooser.
+
+To test native delivery, run this while the app is closed and again while it is open. `ENV/THREAD` placeholders should show the missing-environment message; use real IDs from a paired environment to verify navigation:
+
+```bash
+adb shell am start -a android.intent.action.VIEW -d "https://example.ts.net:37668/ENV/THREAD" com.monke2525e.t3code.custom
+adb shell am start -a android.intent.action.VIEW -d "t3code://thread/ENV/THREAD" com.monke2525e.t3code.custom
+```
+
+There is no fixed port in the Android filter. The native filter accepts two or more path segments; the app validates exactly two IDs, with an optional trailing slash. Existing pairing and app-navigation schemes remain available.
+
 ## Upstream project
 
 # T3 Code

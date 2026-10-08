@@ -303,6 +303,19 @@ const config: ExpoConfig = {
     icon: variant.assets.appIcon,
     ...(isCustomAndroidBuild ? { versionCode: forkBuildNumber } : {}),
     package: isCustomAndroidBuild ? "com.monke2525e.t3code.custom" : variant.androidPackage,
+    intentFilters: [
+      {
+        action: "VIEW",
+        category: ["DEFAULT", "BROWSABLE"],
+        autoVerify: false,
+        data: [{ scheme: "https", host: "*.ts.net", pathPattern: "/.*/.*" }],
+      },
+      {
+        action: "VIEW",
+        category: ["DEFAULT", "BROWSABLE"],
+        data: [{ scheme: "t3code", host: "thread", pathPattern: "/.*/.*" }],
+      },
+    ],
     ...(repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE
       ? { googleServicesFile: repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE }
       : {}),
