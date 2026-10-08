@@ -187,6 +187,19 @@ the same key to update an existing installation. Public T3 Connect configuration
 is optional, as with other source builds. Direct LAN and tailnet pairing work
 without a cloud account.
 
+Custom APKs check [this fork's releases](https://github.com/MONKE2525E/t3code/releases)
+at launch and when returning to the app after 15 minutes. Settings > About > Check
+for mobile updates also checks manually. Download the offered APK and open it in
+Android's installer. Updates preserve the app's data when signed with the same key.
+The PC continues running official upstream T3 Code nightly.
+
+Before publishing, verify this client against the newest published upstream nightly
+server as required by `AGENTS.md`. The build script prints the release tag
+`mobile-build-<versionCode>`. Upload `.t3/artifacts/T3-Code-Custom.apk` to a release
+with that exact tag. Prereleases are supported. You can set
+`T3CODE_MOBILE_BUILD_NUMBER` explicitly, but it must increase for every published
+APK. Do not rename the APK or reuse a build number. iOS updates are unchanged.
+
 The Pull requests button on Home and in the sidebar opens the native viewer.
 Pull request links in chat, linked pull requests, context chips and Thread Git
 controls open in-app when the link is a pull request URL for a repository on the

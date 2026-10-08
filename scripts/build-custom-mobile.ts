@@ -17,6 +17,7 @@ const signingDir = NodePath.join(NodeOS.homedir(), ".local/share/t3-custom-mobil
 const keyPath = NodePath.join(signingDir, "release.keystore");
 const passwordPath = NodePath.join(signingDir, "password");
 const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
+const buildNumber = process.env.T3CODE_MOBILE_BUILD_NUMBER ?? String(Math.floor(Date.now() / 1000));
 if (!sdk) throw new Error("Set ANDROID_HOME to your Android SDK directory.");
 const env = {
   ...process.env,
@@ -26,6 +27,7 @@ const env = {
       }
     : {}),
   T3CODE_ANDROID_CUSTOM: "1",
+  T3CODE_MOBILE_BUILD_NUMBER: buildNumber,
   APP_VARIANT: "preview",
 };
 function run(command: string, args: string[], cwd = mobile) {
@@ -99,3 +101,6 @@ run(NodePath.join(sdk, "build-tools/36.0.0/apksigner"), [
 ]);
 run(NodePath.join(sdk, "build-tools/36.0.0/apksigner"), ["verify", "--verbose", output]);
 console.log(`Custom APK: ${output}`);
+if (!process.argv.includes("--sign-only")) {
+  console.log(`Release tag: mobile-build-${buildNumber}`);
+}

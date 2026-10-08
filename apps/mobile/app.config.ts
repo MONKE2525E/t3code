@@ -10,6 +10,13 @@ Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const isCustomAndroidBuild = repoEnv.T3CODE_ANDROID_CUSTOM === "1";
+const forkBuildNumber = Number(repoEnv.T3CODE_MOBILE_BUILD_NUMBER ?? 1);
+if (
+  isCustomAndroidBuild &&
+  (!Number.isSafeInteger(forkBuildNumber) || forkBuildNumber < 1 || forkBuildNumber > 2_100_000_000)
+) {
+  throw new Error("T3CODE_MOBILE_BUILD_NUMBER must be an integer from 1 to 2100000000.");
+}
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
@@ -294,6 +301,7 @@ const config: ExpoConfig = {
   },
   android: {
     icon: variant.assets.appIcon,
+    ...(isCustomAndroidBuild ? { versionCode: forkBuildNumber } : {}),
     package: isCustomAndroidBuild ? "com.monke2525e.t3code.custom" : variant.androidPackage,
     ...(repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE
       ? { googleServicesFile: repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE }
@@ -467,6 +475,7 @@ const config: ExpoConfig = {
   extra: {
     appVariant: APP_VARIANT,
     customAndroidBuild: isCustomAndroidBuild,
+    ...(isCustomAndroidBuild ? { forkBuildNumber } : {}),
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
