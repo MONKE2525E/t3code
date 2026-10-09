@@ -65,7 +65,13 @@ export function EnrichedSelectableMarkdownText({ fallback, ...props }: Props) {
       h6: heading(5),
       strong: { color: style.strongColor, fontFamily: style.boldFontFamily },
       list: { ...body, bulletColor: style.mutedColor, markerColor: style.mutedColor },
-      blockquote: { ...body, borderColor: style.quoteMarkerColor, borderWidth: 3, padding: 8 },
+      blockquote: {
+        ...body,
+        backgroundColor: "transparent",
+        borderColor: style.quoteMarkerColor,
+        borderWidth: 3,
+        padding: 8,
+      },
       code: {
         color: style.inlineCodeColor,
         backgroundColor: style.codeBackgroundColor,
