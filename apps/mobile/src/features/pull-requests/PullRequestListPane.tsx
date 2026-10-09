@@ -9,7 +9,7 @@ import { memo, type ReactNode, useCallback, useEffect, useMemo, useState } from 
 import { ActivityIndicator, FlatList, Pressable, useColorScheme, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
+import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
@@ -29,7 +29,15 @@ import {
   resolvePullRequestPresentation,
   sortPullRequests,
 } from "./pull-request-model";
-import { PrButton, PrNotice, PrStateMessage } from "./pull-request-components";
+import {
+  PrAvatar,
+  PrButton,
+  PrNotice,
+  PrSkeletonLine,
+  PrSlowLoadHint,
+  PrStateMessage,
+  tint,
+} from "./pull-request-components";
 import { PullRequestFiltersSheet } from "./PullRequestFiltersSheet";
 import { PullRequestListToolbar } from "./PullRequestListToolbar";
 import { useChecksToneColor } from "./PullRequestSummaryTab";
@@ -381,13 +389,17 @@ function ListSkeleton(props: { caption?: string | undefined }) {
           {props.caption}
         </Text>
       ) : null}
+      <PrSlowLoadHint afterMs={8_000} />
       {[0, 1, 2, 3, 4, 5].map((index) => (
         <View key={index} className="flex-row gap-3 px-4 py-3.5">
-          <View className="mt-0.5 size-4 rounded-full bg-subtle-strong" />
+          <View className="size-8 rounded-full bg-subtle-strong" />
           <View className="flex-1 gap-2">
-            <View className="h-3.5 w-[82%] rounded bg-subtle-strong" />
-            <View className="h-3 w-[48%] rounded bg-subtle" />
-            <View className="h-3 w-[36%] rounded bg-subtle" />
+            <PrSkeletonLine width="82%" height={14} strong />
+            <PrSkeletonLine width="48%" />
+            <View className="flex-row gap-1.5">
+              <PrSkeletonLine width={56} height={16} />
+              <PrSkeletonLine width={72} height={16} />
+            </View>
           </View>
         </View>
       ))}
@@ -395,9 +407,14 @@ function ListSkeleton(props: { caption?: string | undefined }) {
   );
 }
 
+function labelColor(color: string | null) {
+  return color && /^[0-9a-f]{6}$/i.test(color) ? `#${color}` : null;
+}
+
 /**
- * The desktop row on a phone: state icon, `#number` before the title with the checks glyph after
- * it, then author and repository; the change size sits above the age on the right.
+ * The desktop row on a phone: the state in a tinted badge, `#number` before the title, then the
+ * author's face, the repository and the age, and a line of chips for checks, a requested review,
+ * the outcome and the first labels. The change size sits on the right.
  */
 const PullRequestRow = memo(function PullRequestRow(props: {
   entry: PullRequestListEntry;
@@ -411,32 +428,38 @@ const PullRequestRow = memo(function PullRequestRow(props: {
   const hasStats = entry.additions > 0 || entry.deletions > 0;
   const checks =
     entry.checksState === "passing"
-      ? { icon: "checkmark.circle" as const, tone: "success" as const }
+      ? { icon: "checkmark.circle" as const, tone: "success" as const, label: "Passing" }
       : entry.checksState === "failing"
-        ? { icon: "xmark.circle" as const, tone: "failure" as const }
+        ? { icon: "xmark.circle" as const, tone: "failure" as const, label: "Failing" }
         : entry.checksState === "pending"
-          ? { icon: "clock" as const, tone: "pending" as const }
+          ? { icon: "clock" as const, tone: "pending" as const, label: "Running" }
           : null;
+  const reviewRequested = entry.viewerReviewRequested && entry.state === "open";
+  const outcome =
+    presentation.label !== "Open" && presentation.label !== "Draft" ? presentation : null;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${presentation.label} pull request ${entry.number}: ${entry.title}, ${entry.repository}${entry.checksState ? `, checks ${entry.checksState}` : ""}${entry.viewerReviewRequested ? ", review requested" : ""}`}
+      accessibilityLabel={`${presentation.label} pull request ${entry.number}: ${entry.title}, ${entry.repository}${entry.checksState ? `, checks ${entry.checksState}` : ""}${reviewRequested ? ", review requested" : ""}`}
       accessibilityState={{ selected: props.selected }}
       onPress={() => props.onSelect(entry)}
       className={cn(
-        "mx-1 min-h-16 flex-row gap-3 rounded-2xl px-3 py-3",
+        "mx-2 min-h-16 flex-row gap-3 rounded-2xl px-3 py-3",
         props.selected ? "bg-subtle-strong" : "active:bg-subtle",
       )}
     >
-      <View className="pt-0.5">
+      <View
+        className="size-8 items-center justify-center rounded-full"
+        style={{ backgroundColor: tint(presentation.color, 0.14) }}
+      >
         <SymbolView
           name={presentation.icon}
-          size={17}
+          size={16}
           tintColor={presentation.color}
           type="monochrome"
         />
       </View>
-      <View className="min-w-0 flex-1 gap-1">
+      <View className="min-w-0 flex-1 gap-1.5">
         <Text
           numberOfLines={2}
           className="text-[15px] font-t3-medium leading-[20px] text-foreground"
@@ -445,42 +468,77 @@ const PullRequestRow = memo(function PullRequestRow(props: {
           {entry.title}
         </Text>
         <View className="flex-row items-center gap-1.5">
-          {checks ? (
-            <SymbolView
-              name={checks.icon}
-              size={13}
-              tintColor={checksColor(checks.tone)}
-              type="monochrome"
-            />
-          ) : null}
+          <PrAvatar actor={entry.author} size={16} />
           <Text numberOfLines={1} className="min-w-0 shrink text-[13px] text-foreground-muted">
             {entry.author?.login ?? "ghost"}
-            <Text className="text-[13px] text-foreground-tertiary">{`  ${entry.repository}`}</Text>
+            <Text className="text-[13px] text-foreground-tertiary">
+              {`  ${entry.repository} · ${relativeTime(entry.updatedAt)}`}
+            </Text>
           </Text>
         </View>
-        {(entry.viewerReviewRequested && entry.state === "open") ||
-        (presentation.label !== "Open" && presentation.label !== "Draft") ? (
-          <Text className="text-xs font-t3-medium text-foreground-secondary">
-            {[
-              presentation.label !== "Open" && presentation.label !== "Draft"
-                ? presentation.label
-                : null,
-              entry.viewerReviewRequested && entry.state === "open" ? "Review requested" : null,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </Text>
+        {checks || reviewRequested || outcome || entry.labels.length > 0 ? (
+          <View className="flex-row flex-wrap items-center gap-1.5">
+            {outcome ? <RowChip label={outcome.label} color={outcome.color} /> : null}
+            {checks ? (
+              <RowChip icon={checks.icon} label={checks.label} color={checksColor(checks.tone)} />
+            ) : null}
+            {reviewRequested ? (
+              <RowChip icon="eye" label="Review requested" color={checksColor("pending")} />
+            ) : null}
+            {entry.labels.slice(0, 2).map((label) => {
+              const color = labelColor(label.color);
+              // Host label colours are often pale, so the colour rides a dot and the name keeps
+              // the theme's own ink rather than becoming unreadable on a light background.
+              return (
+                <View
+                  key={label.name}
+                  className="max-w-40 flex-row items-center gap-1 rounded-full bg-subtle px-2 py-0.5"
+                >
+                  {color ? (
+                    <View className="size-1.5 rounded-full" style={{ backgroundColor: color }} />
+                  ) : null}
+                  <Text
+                    numberOfLines={1}
+                    className="shrink text-[11px] font-t3-medium text-foreground-secondary"
+                  >
+                    {label.name}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
         ) : null}
       </View>
-      <View className="items-end gap-1 pt-0.5">
-        {hasStats ? (
-          <Text className="font-mono text-xs">
-            <Text className="font-mono text-xs text-primary-text">+{entry.additions}</Text>
-            <Text className="font-mono text-xs text-danger-foreground"> -{entry.deletions}</Text>
+      {hasStats ? (
+        <View className="items-end pt-0.5">
+          <Text className="font-mono text-xs" style={{ color: checksColor("success") }}>
+            +{entry.additions}
           </Text>
-        ) : null}
-        <Text className="text-xs text-foreground-tertiary">{relativeTime(entry.updatedAt)}</Text>
-      </View>
+          <Text className="font-mono text-xs" style={{ color: checksColor("failure") }}>
+            -{entry.deletions}
+          </Text>
+        </View>
+      ) : null}
     </Pressable>
   );
 });
+
+function RowChip(props: { icon?: AppSymbolName; label: string; color: string }) {
+  return (
+    <View
+      className="max-w-40 flex-row items-center gap-1 rounded-full px-2 py-0.5"
+      style={{ backgroundColor: tint(props.color, 0.13) }}
+    >
+      {props.icon ? (
+        <SymbolView name={props.icon} size={11} tintColor={props.color} type="monochrome" />
+      ) : null}
+      <Text
+        numberOfLines={1}
+        className="shrink text-[11px] font-t3-medium"
+        style={{ color: props.color }}
+      >
+        {props.label}
+      </Text>
+    </View>
+  );
+}

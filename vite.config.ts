@@ -363,6 +363,7 @@ export default defineConfig({
           "apps/mobile/src/features/pull-requests/PullRequestDetailScreen.tsx",
           "apps/mobile/src/features/pull-requests/PullRequestFiltersSheet.tsx",
           "apps/mobile/src/features/pull-requests/PullRequestListPane.tsx",
+          "apps/mobile/src/features/pull-requests/PullRequestMergeBar.tsx",
           "apps/mobile/src/features/pull-requests/PullRequestSummaryTab.tsx",
           "apps/mobile/src/features/pull-requests/PullRequestTimelineTab.tsx",
           "apps/mobile/src/features/pull-requests/pull-request-components.tsx",

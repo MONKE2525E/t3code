@@ -11,6 +11,7 @@ import {
 } from "@t3tools/shared/pullRequestHandoff";
 
 import type { AppSymbolName } from "../../components/AppSymbol";
+import { summarizePullRequestChecks, type PullRequestChecksTone } from "./pull-request-model";
 
 /** The desktop's checks rollup: failures first, then anything still waiting, then a pass. */
 function checksState(checks: PullRequestDetail["checks"]) {
@@ -29,7 +30,10 @@ export type PullRequestMenuCommand =
   | { readonly kind: "fix-findings" }
   | { readonly kind: "action"; readonly action: PullRequestAction }
   | { readonly kind: "merge"; readonly method: PullRequestMergeMethod }
+  | { readonly kind: "admin-merge"; readonly method: PullRequestMergeMethod }
+  | { readonly kind: "select-merge-method"; readonly method: PullRequestMergeMethod }
   | { readonly kind: "enable-auto-merge"; readonly method: PullRequestMergeMethod }
+  | { readonly kind: "resolve-conflicts" }
   | { readonly kind: "open-host" }
   | { readonly kind: "copy-link" }
   | { readonly kind: "copy-number" };
@@ -41,6 +45,8 @@ export interface PullRequestMenuItem {
   readonly icon: AppSymbolName;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
+  /** Marks the chosen option in a single-choice group, such as the merge strategy. */
+  readonly checked?: boolean;
   readonly command: PullRequestMenuCommand;
 }
 
@@ -58,12 +64,15 @@ export interface PullRequestMenuInput {
     | "mergeCapabilities"
     | "checks"
     | "provider"
-  >;
+  > &
+    Partial<Pick<PullRequestDetail, "baseComparison" | "behindBy" | "baseBranch">>;
   /** The thread the viewer was opened from, or null when opened from the pull request list. */
   readonly thread: { readonly linked: boolean; readonly canLink: boolean } | null;
   /** False while a stacked pull request's stack is unknown, or when it belongs to one. */
   readonly canMergeSingle: boolean;
   readonly mergeMethod: PullRequestMergeMethod;
+  /** Whether this client can run `gh pr merge --admin` on the environment. */
+  readonly canAdminMerge?: boolean;
   readonly refreshing: boolean;
   readonly actionPending: boolean;
   readonly handoffPending: boolean;
@@ -76,33 +85,27 @@ export function allowedMergeMethods(
   return detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
 }
 
+const MERGE_METHOD_SUBTITLES: Record<PullRequestMergeMethod, string> = {
+  merge: "Keeps every commit and adds a merge commit.",
+  squash: "Combines every commit into one.",
+  rebase: "Replays each commit onto the base branch.",
+};
+
+function hostActions(detail: PullRequestMenuInput["detail"]) {
+  return (action: PullRequestAction) =>
+    detail.capabilities.actions.includes(action) &&
+    detail.viewerPermissions.actions.includes(action);
+}
+
 /**
- * The three-dot menu, grouped where the desktop menu draws separators. Every guard is the
- * desktop panel's: the host must offer an action and this account must be allowed it, a draft
- * or conflicting branch offers no merge, and a pull request in a host stack is merged from the
- * stack. Where the desktop header holds the primary button, the phone has no header button, so
- * each merge strategy is its own row instead of a radio group beside a Merge button.
+ * The three-dot menu, grouped where the desktop menu draws separators: hand-offs to an agent,
+ * the draft toggle, sharing, then the one lifecycle change the state allows. Merging lives in
+ * the merge box's own split button, as it does beside the desktop header's Merge pill.
  */
 export function pullRequestMenuGroups(input: PullRequestMenuInput): PullRequestMenuItem[][] {
   const { detail } = input;
-  const can = (action: PullRequestAction) =>
-    detail.capabilities.actions.includes(action) &&
-    detail.viewerPermissions.actions.includes(action);
+  const can = hostActions(detail);
   const open = detail.state === "open";
-  const conflicting = open && detail.mergeability === "conflicting";
-  const methods = allowedMergeMethods(detail);
-  const autoMergeArmed = open && detail.autoMergeEnabled === true;
-  const primary = resolvePullRequestPrimaryControl({
-    state: detail.state,
-    isDraft: detail.isDraft,
-    mergeability: detail.mergeability,
-    checksState: checksState(detail.checks),
-    autoMergeEnabled: detail.autoMergeEnabled,
-    hasMergeMethod: methods.length > 0,
-    canMerge: input.canMergeSingle && can("merge"),
-    canMarkReady: can("ready"),
-    canEnableAutoMerge: input.canMergeSingle && can("enable-auto-merge"),
-  });
   const handoffLabels = pullRequestHandoffLabels(input.thread !== null);
   const busy = input.actionPending;
 
@@ -152,53 +155,14 @@ export function pullRequestMenuGroups(input: PullRequestMenuInput): PullRequestM
   );
 
   const actions: PullRequestMenuItem[] = [];
-  if (open) {
-    if (can(detail.isDraft ? "ready" : "draft")) {
-      actions.push({
-        id: "draft",
-        title: detail.isDraft ? "Ready for review" : "Convert to draft",
-        icon: detail.isDraft ? "eye" : "doc",
-        disabled: busy,
-        command: { kind: "action", action: detail.isDraft ? "ready" : "draft" },
-      });
-    }
-    const mergeable = input.canMergeSingle && !detail.isDraft && !conflicting;
-    if (mergeable && can("merge")) {
-      for (const method of methods) {
-        actions.push({
-          id: `merge:${method}`,
-          title: PULL_REQUEST_MERGE_METHOD_LABELS[method],
-          icon: "arrow.triangle.merge",
-          disabled: busy,
-          command: { kind: "merge", method },
-        });
-      }
-    }
-    if (autoMergeArmed && input.canMergeSingle && can("disable-auto-merge")) {
-      actions.push({
-        id: "disable-auto-merge",
-        title: "Disable auto-merge",
-        icon: "bolt.circle",
-        disabled: busy,
-        command: { kind: "action", action: "disable-auto-merge" },
-      });
-    } else if (
-      !autoMergeArmed &&
-      mergeable &&
-      can("enable-auto-merge") &&
-      methods.length > 0 &&
-      // Auto-merge only means something while the host is still waiting on checks.
-      primary === "enable-auto-merge"
-    ) {
-      actions.push({
-        id: "enable-auto-merge",
-        title: "Enable auto-merge",
-        subtitle: PULL_REQUEST_MERGE_METHOD_LABELS[input.mergeMethod],
-        icon: "bolt.circle",
-        disabled: busy,
-        command: { kind: "enable-auto-merge", method: input.mergeMethod },
-      });
-    }
+  if (open && can(detail.isDraft ? "ready" : "draft")) {
+    actions.push({
+      id: "draft",
+      title: detail.isDraft ? "Ready for review" : "Convert to draft",
+      icon: detail.isDraft ? "eye" : "doc",
+      disabled: busy,
+      command: { kind: "action", action: detail.isDraft ? "ready" : "draft" },
+    });
   }
 
   const share: PullRequestMenuItem[] = [
@@ -248,6 +212,195 @@ export function pullRequestMenuGroups(input: PullRequestMenuInput): PullRequestM
   return [agent, actions, share, lifecycle].filter((group) => group.length > 0);
 }
 
+export type PullRequestMergeTone = PullRequestChecksTone | "merged" | "closed" | "draft";
+
+/** The merge box: where the pull request stands, the one button that moves it, and the rest. */
+export interface PullRequestMergeBox {
+  readonly tone: PullRequestMergeTone;
+  readonly title: string;
+  readonly detail: string | null;
+  readonly primary: {
+    readonly label: string;
+    readonly icon: AppSymbolName;
+    readonly command: PullRequestMenuCommand;
+    readonly disabled: boolean;
+  } | null;
+  /** The split button's dropdown: strategy, admin merge, auto-merge and branch upkeep. */
+  readonly options: ReadonlyArray<PullRequestMenuItem>;
+}
+
+/**
+ * The desktop header's merge area, laid out as a phone-width box. The primary control is the
+ * shared resolver's, so the phone and the desktop never disagree about whether this is a merge,
+ * a ready-for-review, a conflict to resolve or an auto-merge to arm. Admin merge is offered only
+ * on GitHub, only where a normal merge would be (open, not a draft, no conflicts, not stacked),
+ * and only where the client can reach a terminal on the environment to run the CLI.
+ */
+export function pullRequestMergeBox(input: PullRequestMenuInput): PullRequestMergeBox {
+  const { detail } = input;
+  const can = hostActions(detail);
+  const methods = allowedMergeMethods(detail);
+  const method = input.mergeMethod;
+  const methodLabel = PULL_REQUEST_MERGE_METHOD_LABELS[method];
+  const busy = input.actionPending;
+  const checks = summarizePullRequestChecks(detail.checks);
+  const primaryControl = resolvePullRequestPrimaryControl({
+    state: detail.state,
+    isDraft: detail.isDraft,
+    mergeability: detail.mergeability,
+    checksState: checksState(detail.checks),
+    autoMergeEnabled: detail.autoMergeEnabled,
+    hasMergeMethod: methods.length > 0,
+    canMerge: input.canMergeSingle && can("merge"),
+    canMarkReady: can("ready"),
+    canEnableAutoMerge: input.canMergeSingle && can("enable-auto-merge"),
+  });
+
+  if (detail.state === "merged") {
+    return { tone: "merged", title: "Merged", detail: null, primary: null, options: [] };
+  }
+  if (detail.state === "closed") {
+    return {
+      tone: "closed",
+      title: "Closed without merging",
+      detail: null,
+      primary: null,
+      options: [],
+    };
+  }
+
+  const conflicting = detail.mergeability === "conflicting";
+  const behind = detail.baseComparison === "behind";
+  const behindLabel = behind
+    ? detail.behindBy
+      ? `${detail.behindBy} ${detail.behindBy === 1 ? "commit" : "commits"} behind ${detail.baseBranch ?? "the base"}`
+      : `Behind ${detail.baseBranch ?? "the base"}`
+    : null;
+  const facts = [
+    checks.tone === "none" ? null : checks.label,
+    conflicting
+      ? null
+      : detail.mergeability === "mergeable"
+        ? "No conflicts"
+        : "Checking for conflicts",
+    behindLabel,
+  ].filter((fact): fact is string => fact !== null);
+
+  const status: Pick<PullRequestMergeBox, "tone" | "title" | "detail"> = detail.isDraft
+    ? { tone: "draft", title: "Draft", detail: "Mark it ready for review before merging." }
+    : conflicting
+      ? {
+          tone: "failure",
+          title: "Merge conflicts",
+          detail: `Conflicts with ${detail.baseBranch ?? "the base branch"} must be resolved first.`,
+        }
+      : detail.autoMergeEnabled === true
+        ? {
+            tone: "pending",
+            title: "Auto-merge enabled",
+            detail: `Merges with ${PULL_REQUEST_MERGE_METHOD_LABELS[detail.autoMergeMethod ?? method].toLowerCase()} once every requirement passes.`,
+          }
+        : checks.tone === "failure"
+          ? { tone: "failure", title: "Checks failing", detail: facts.join(" · ") }
+          : checks.tone === "pending"
+            ? { tone: "pending", title: "Checks running", detail: facts.join(" · ") }
+            : detail.mergeability === "mergeable"
+              ? { tone: "success", title: "Ready to merge", detail: facts.join(" · ") || null }
+              : { tone: "none", title: "Checking mergeability", detail: facts.join(" · ") || null };
+
+  const primary: PullRequestMergeBox["primary"] =
+    primaryControl === "merge"
+      ? {
+          label: methodLabel,
+          icon: "arrow.triangle.merge",
+          command: { kind: "merge", method },
+          disabled: busy,
+        }
+      : primaryControl === "enable-auto-merge"
+        ? {
+            label: "Enable auto-merge",
+            icon: "bolt.circle",
+            command: { kind: "enable-auto-merge", method },
+            disabled: busy,
+          }
+        : primaryControl === "ready"
+          ? {
+              label: "Ready for review",
+              icon: "eye",
+              command: { kind: "action", action: "ready" },
+              disabled: busy,
+            }
+          : primaryControl === "resolve"
+            ? {
+                label: "Resolve conflicts",
+                icon: "hammer",
+                command: { kind: "resolve-conflicts" },
+                disabled: busy || input.handoffPending,
+              }
+            : null;
+
+  const mergeable = input.canMergeSingle && !detail.isDraft && !conflicting;
+  const options: PullRequestMenuItem[] = [];
+  if (mergeable && methods.length > 1 && (can("merge") || can("enable-auto-merge"))) {
+    for (const option of methods) {
+      options.push({
+        id: `method:${option}`,
+        title: PULL_REQUEST_MERGE_METHOD_LABELS[option],
+        subtitle: MERGE_METHOD_SUBTITLES[option],
+        icon: "arrow.triangle.merge",
+        checked: option === method,
+        command: { kind: "select-merge-method", method: option },
+      });
+    }
+  }
+  if (primaryControl === "enable-auto-merge" && mergeable && can("merge")) {
+    options.push({
+      id: "merge-now",
+      title: "Merge now",
+      subtitle: `${methodLabel}, without waiting for checks.`,
+      icon: "arrow.triangle.merge",
+      disabled: busy,
+      command: { kind: "merge", method },
+    });
+  }
+  if (
+    mergeable &&
+    methods.length > 0 &&
+    input.canAdminMerge === true &&
+    detail.provider === "github"
+  ) {
+    options.push({
+      id: "admin-merge",
+      title: "Merge as admin",
+      subtitle: `${methodLabel}, bypassing branch protection.`,
+      icon: "lock.shield",
+      disabled: busy,
+      command: { kind: "admin-merge", method },
+    });
+  }
+  if (detail.autoMergeEnabled === true && input.canMergeSingle && can("disable-auto-merge")) {
+    options.push({
+      id: "disable-auto-merge",
+      title: "Disable auto-merge",
+      icon: "bolt.slash",
+      disabled: busy,
+      command: { kind: "action", action: "disable-auto-merge" },
+    });
+  }
+  if (behind && can("update-branch")) {
+    options.push({
+      id: "update-branch",
+      title: "Update branch",
+      subtitle: behindLabel ?? undefined,
+      icon: "arrow.triangle.2.circlepath",
+      disabled: busy,
+      command: { kind: "action", action: "update-branch" },
+    });
+  }
+
+  return { ...status, primary, options };
+}
+
 /**
  * What to ask before a host action that cannot be taken back from here, worded as the desktop
  * dialog words it. Null for the actions the desktop runs on the press.
@@ -263,6 +416,13 @@ export function pullRequestActionConfirmation(
         message: `This merges #${number} using ${command.method}.`,
         confirmText: PULL_REQUEST_MERGE_METHOD_LABELS[command.method],
         destructive: false,
+      };
+    case "admin-merge":
+      return {
+        title: "Merge as admin?",
+        message: `This merges #${number} using ${command.method} and bypasses branch protection, including required checks and reviews. It runs the GitHub CLI on your environment as you.`,
+        confirmText: "Merge as admin",
+        destructive: true,
       };
     case "enable-auto-merge":
       return {

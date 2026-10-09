@@ -67,7 +67,8 @@ describe("mobile PR listing", () => {
   it("uses available pane width for folded and unfolded layouts", () => {
     expect(usesPullRequestSplitView(412)).toBe(false);
     expect(usesPullRequestSplitView(600)).toBe(false);
-    expect(usesPullRequestSplitView(680)).toBe(true);
+    // An unfolded Fold gives the pull request the whole width instead of a cramped half.
+    expect(usesPullRequestSplitView(750)).toBe(false);
     expect(usesPullRequestSplitView(840)).toBe(true);
   });
 });
