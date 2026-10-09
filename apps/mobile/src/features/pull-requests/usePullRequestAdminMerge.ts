@@ -8,6 +8,7 @@ import {
   type PullRequestMergeMethod,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import * as Cause from "effect/Cause";
 import { useContext } from "react";
 
 import { useEnvironmentScope } from "../../state/session";
@@ -93,10 +94,26 @@ export function usePullRequestAdminMerge(environmentId: EnvironmentId) {
         unsubscribe = registry.subscribe(
           observed,
           (result) => {
+            if (AsyncResult.isFailure(result)) {
+              const failure = Cause.squash(result.cause);
+              resolve({
+                kind: "failed",
+                exitCode: -1,
+                message:
+                  failure instanceof Error
+                    ? failure.message
+                    : "The terminal closed before the merge finished.",
+              });
+              return;
+            }
             if (!AsyncResult.isSuccess(result)) return;
             const read = readAdminMergeOutput(terminalOutputText(result.value.output));
             if (read.kind !== "running") return resolve(read);
-            if (result.value.status === "exited" || result.value.status === "error") {
+            if (
+              result.value.status === "exited" ||
+              result.value.status === "error" ||
+              (result.value.status === "closed" && result.value.version > 0)
+            ) {
               resolve({
                 kind: "failed",
                 exitCode: -1,
