@@ -3,6 +3,8 @@ import {
   ProjectId,
   ThreadId,
   type PullRequestDetail,
+  type PullRequestListEntry,
+  type PullRequestMergeMethod,
   type PullRequestRef,
 } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -10,19 +12,30 @@ import {
   gitHubPullRequestBrowserUrl,
   parseChangeRequestUrl,
 } from "@t3tools/shared/changeRequestUrl";
-import { allowsSinglePullRequestMerge } from "@t3tools/shared/pullRequestHandoff";
+import {
+  allowsSinglePullRequestMerge,
+  resolvePullRequestMergeMethod,
+} from "@t3tools/shared/pullRequestHandoff";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { MenuAction } from "@react-native-menu/menu";
-import { Image } from "expo-image";
 import { type ReactNode, useCallback, useContext, useMemo, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, useColorScheme, View } from "react-native";
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  useColorScheme,
+  View,
+  type NativeScrollEvent,
+} from "react-native";
+import Animated, { LinearTransition, ReduceMotion } from "react-native-reanimated";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
+import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -34,6 +47,7 @@ import { serverEnvironment } from "../../state/server";
 import {
   allowedMergeMethods,
   pullRequestMenuGroups,
+  pullRequestMergeBox,
   type PullRequestMenuCommand,
   type PullRequestMenuItem,
 } from "./pull-request-actions";
@@ -41,12 +55,26 @@ import {
   describePullRequestFailure,
   pullRequestFailureMessage,
   resolvePullRequestPresentation,
+  summarizePullRequestChecks,
 } from "./pull-request-model";
-import { PrButton, PrNotice, PrStateMessage, PrTabs } from "./pull-request-components";
+import {
+  PR_EASE,
+  PR_FADE_IN,
+  PrAvatar,
+  PrButton,
+  PrNotice,
+  PrPill,
+  PrSkeletonLine,
+  PrSlowLoadHint,
+  PrStateMessage,
+  PrTabs,
+} from "./pull-request-components";
 import { PullRequestCode } from "./PullRequestCode";
+import { PullRequestMergeBar, toMenuAction } from "./PullRequestMergeBar";
 import {
   DEFAULT_PULL_REQUEST_SUMMARY_SECTIONS,
   PullRequestSummaryTab,
+  useChecksToneColor,
   type PullRequestSummarySections,
 } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
@@ -58,6 +86,32 @@ import {
 } from "./usePullRequestDetailActions";
 
 type DetailTab = "summary" | "timeline" | "code";
+
+/** A pane at least this wide puts the merge box beside the header and the summary in columns. */
+const WIDE_PANE = 640;
+
+const LAYOUT = LinearTransition.duration(200).easing(PR_EASE).reduceMotion(ReduceMotion.System);
+
+/**
+ * What the list already knows about a pull request, drawn in the header while the detail is
+ * still on its way so the screen never opens empty.
+ */
+export type PullRequestPreview = Pick<
+  PullRequestListEntry,
+  | "title"
+  | "state"
+  | "isDraft"
+  | "mergeability"
+  | "author"
+  | "headBranch"
+  | "baseBranch"
+  | "additions"
+  | "deletions"
+  | "updatedAt"
+>;
+
+/** The strategy picked last, kept for the session so the next pull request starts with it. */
+let lastSelectedMergeMethod: PullRequestMergeMethod = "squash";
 
 /**
  * The route a pull request link opens: that pull request alone, at every width, with Back
@@ -98,15 +152,18 @@ export function PullRequestDetailScreen(
 }
 
 /**
- * One pull request: the desktop header (state, title, author, branches, size), native tabs, and
- * the rest of the screen for content. On a phone, `onBack` is set and the header takes over the
- * top bar, so there is no second bar above it; beside the list there is no back control and the
- * list's own header stays on top.
+ * One pull request, laid out like the desktop panel: a header with the state, title, author,
+ * branches and size; the merge box with its split button; tabs; and the rest of the screen for
+ * content. The header folds to one line once the content is scrolled, as the desktop's does. On a
+ * wide pane (an unfolded Fold, a tablet) the merge box sits beside the header and the Summary
+ * splits into columns.
  */
 export function PullRequestDetailPane(props: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   originThreadId?: ThreadId | null;
+  /** Drawn until the detail arrives; the list passes the row that was tapped. */
+  preview?: PullRequestPreview | null;
   onBack?: (() => void) | undefined;
 }) {
   const registry = useContext(RegistryContext);
@@ -115,9 +172,12 @@ export function PullRequestDetailPane(props: {
     DEFAULT_PULL_REQUEST_SUMMARY_SECTIONS,
   );
   const [titleExpanded, setTitleExpanded] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const [paneWidth, setPaneWidth] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [diffVersion, setDiffVersion] = useState(0);
+  const [mergeMethodChoice, setMergeMethodChoice] = useState<PullRequestMergeMethod | null>(null);
   const target = { environmentId: props.environmentId, input: props.reference };
   const detail = useEnvironmentQuery(pullRequestEnvironment.detail(target));
   // Read with the detail, as the desktop does: the reviewers' verdicts and the findings a
@@ -128,6 +188,7 @@ export function PullRequestDetailPane(props: {
   const { refresh: refreshActivity } = activity;
   const openLink = useOpenPullRequest();
   const originThreadId = props.originThreadId ?? null;
+  const wide = paneWidth >= WIDE_PANE;
   // A link in a description or comment opens in the viewer when it names a pull request this
   // environment can read, so following one never drops the reader into the GitHub app. The
   // originating thread travels with it, so a nested pull request can still hand off there.
@@ -196,8 +257,23 @@ export function PullRequestDetailPane(props: {
     activity: activity.data,
     originThreadId,
     refreshFromHost: refresh,
+    onSelectMergeMethod: (method) => {
+      lastSelectedMergeMethod = method;
+      setMergeMethodChoice(method);
+    },
   });
   const canMergeSingle = useCanMergeSinglePullRequest(props.environmentId, props.reference, pr);
+  // Folds the header once the content has room to scroll under it, and unfolds at the top. The
+  // room check keeps a short page from folding, growing past the fold point and unfolding again.
+  const onContentScroll = useCallback((event: NativeScrollEvent) => {
+    const room = event.contentSize.height - event.layoutMeasurement.height;
+    const y = event.contentOffset.y;
+    setScrolled((current) => (current ? y > 4 : y > 48 && room > 260));
+  }, []);
+  const selectTab = (next: DetailTab) => {
+    setScrolled(false);
+    setTab(next);
+  };
 
   if (!pr) {
     return (
@@ -205,6 +281,7 @@ export function PullRequestDetailPane(props: {
         onBack={props.onBack}
         repository={props.reference.repository}
         number={props.reference.number}
+        onLayoutWidth={setPaneWidth}
       >
         {detail.error ? (
           <PrStateMessage
@@ -230,7 +307,18 @@ export function PullRequestDetailPane(props: {
             ) : null}
           </PrStateMessage>
         ) : (
-          <PrStateMessage icon="arrow.triangle.pull" title="Loading pull request" loading />
+          <DetailSkeleton preview={props.preview ?? null} wide={wide}>
+            <PrSlowLoadHint>
+              <PrButton label="Retry" icon="arrow.clockwise" onPress={detail.refresh} />
+              {hostUrl ? (
+                <PrButton
+                  label="Open on GitHub"
+                  icon="safari"
+                  onPress={() => void tryOpenExternalUrl(hostUrl, "pull-request")}
+                />
+              ) : null}
+            </PrSlowLoadHint>
+          </DetailSkeleton>
         )}
       </PaneBar>
     );
@@ -240,51 +328,83 @@ export function PullRequestDetailPane(props: {
     pr.viewerPermissions.verdicts.includes(verdict),
   );
   const canComment = pr.capabilities.comment && pr.viewerPermissions.comment;
-  const compact = tab === "code";
+  const condensed = tab === "code" || (scrolled && !titleExpanded);
   const failureLine =
     refreshError ?? (detail.error ? pullRequestFailureMessage(detail.error) : null);
   const notices = failureLine === null ? [] : [`${failureLine} Showing the last loaded details.`];
   const methods = allowedMergeMethods(pr);
-  const menu = pullRequestMenuGroups({
+  const mergeMethod = resolvePullRequestMergeMethod(
+    methods,
+    mergeMethodChoice ?? pr.autoMergeMethod ?? null,
+    undefined,
+    lastSelectedMergeMethod,
+  );
+  const busy =
+    refreshing || actions.pendingAction !== null || actions.linkPending || actions.handoffPending;
+  const menuInput = {
     detail: pr,
     thread: actions.thread,
     canMergeSingle,
-    mergeMethod: pr.autoMergeMethod ?? methods[0] ?? "merge",
+    mergeMethod,
+    canAdminMerge: actions.canAdminMerge,
     refreshing,
     actionPending: actions.pendingAction !== null || actions.linkPending,
     handoffPending: actions.handoffPending || activity.isPending,
-  });
-  const menuButton = (
-    <PullRequestMenu
-      groups={menu}
-      busy={
-        refreshing ||
-        actions.pendingAction !== null ||
-        actions.linkPending ||
-        actions.handoffPending
-      }
+  };
+  const menu = pullRequestMenuGroups(menuInput);
+  const mergeBox = pullRequestMergeBox(menuInput);
+  const mergeBar = (
+    <PullRequestMergeBar
+      box={mergeBox}
+      pr={pr}
+      busy={actions.pendingAction === "merge" || actions.pendingAction === "enable-auto-merge"}
       onCommand={actions.run}
+      className={wide ? "w-80" : "mx-4"}
     />
   );
   return (
-    <PaneBar onBack={props.onBack} repository={pr.repository} number={pr.number} menu={menuButton}>
-      <View className="gap-1.5 px-4 pb-3">
-        <StatePill pr={pr} />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={pr.title}
-          accessibilityHint={titleExpanded ? "Collapse the title" : "Show the full title"}
-          onPress={() => setTitleExpanded((value) => !value)}
-        >
-          <Text
-            numberOfLines={titleExpanded ? undefined : compact ? 1 : 3}
-            className="text-[18px] font-t3-bold leading-6 text-foreground"
+    <PaneBar
+      onBack={props.onBack}
+      repository={pr.repository}
+      number={pr.number}
+      onLayoutWidth={setPaneWidth}
+      menu={<PullRequestMenu groups={menu} busy={busy} onCommand={actions.run} />}
+    >
+      <Animated.View layout={LAYOUT} className={cn("px-4", wide && "flex-row items-start gap-4")}>
+        <View className={cn("min-w-0 gap-2 pb-3", wide && "flex-1")}>
+          <View className="flex-row flex-wrap items-center gap-1.5">
+            <StatePill pr={pr} />
+            <ChecksPill checks={pr.checks} />
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={pr.title}
+            accessibilityHint={titleExpanded ? "Collapse the title" : "Show the full title"}
+            onPress={() => setTitleExpanded((value) => !value)}
           >
-            {pr.title}
-          </Text>
-        </Pressable>
-        {compact ? null : <HeaderFacts pr={pr} />}
-      </View>
+            <Text
+              numberOfLines={titleExpanded ? undefined : condensed ? 1 : 3}
+              className={cn(
+                "font-t3-bold text-foreground",
+                condensed ? "text-[16px] leading-[22px]" : "text-[20px] leading-[26px]",
+              )}
+            >
+              {pr.title}
+            </Text>
+          </Pressable>
+          {condensed ? null : (
+            <Animated.View entering={PR_FADE_IN}>
+              <HeaderFacts pr={pr} author={activity.data?.author ?? pr.author} />
+            </Animated.View>
+          )}
+        </View>
+        {wide && !condensed ? <View className="pb-3">{mergeBar}</View> : null}
+      </Animated.View>
+      {!wide && !condensed ? (
+        <Animated.View entering={PR_FADE_IN} className="pb-3">
+          {mergeBar}
+        </Animated.View>
+      ) : null}
       <ActionStatus status={actions.status} onDismiss={actions.dismissStatus} />
       <PrTabs
         tabs={[
@@ -295,45 +415,48 @@ export function PullRequestDetailPane(props: {
             : []),
         ]}
         selected={tab}
-        onSelect={setTab}
+        onSelect={selectTab}
       />
       {notices.length > 0 ? (
-        <View className="pt-2">
-          <PrNotice
-            lines={notices}
-            actionLabel="Retry"
-            onAction={() => (refreshError ? void refresh() : detail.refresh())}
-          />
-        </View>
+        <PrNotice
+          lines={notices}
+          actionLabel="Retry"
+          onAction={() => (refreshError ? void refresh() : detail.refresh())}
+        />
       ) : null}
-      {tab === "summary" ? (
-        <PullRequestSummaryTab
-          pr={pr}
-          activity={activity.data}
-          sections={sections}
-          onSectionsChange={setSections}
-          refreshing={refreshing}
-          onRefresh={() => void refresh()}
-          onLinkPress={onLinkPress}
-        />
-      ) : tab === "code" ? (
-        <PullRequestCode
-          key={diffVersion}
-          environmentId={props.environmentId}
-          reference={props.reference}
-        />
-      ) : (
-        <PullRequestTimelineTab
-          activity={activity}
-          composer={composer}
-          canComment={canComment}
-          verdicts={verdicts}
-          target={`${pr.repository}#${pr.number}`}
-          refreshing={refreshing}
-          onRefresh={() => void refresh()}
-          onLinkPress={onLinkPress}
-        />
-      )}
+      <View className="min-h-0 flex-1 border-t border-border">
+        {tab === "summary" ? (
+          <PullRequestSummaryTab
+            pr={pr}
+            activity={activity.data}
+            sections={sections}
+            onSectionsChange={setSections}
+            refreshing={refreshing}
+            onRefresh={() => void refresh()}
+            onLinkPress={onLinkPress}
+            onScroll={onContentScroll}
+            wide={wide}
+          />
+        ) : tab === "code" ? (
+          <PullRequestCode
+            key={diffVersion}
+            environmentId={props.environmentId}
+            reference={props.reference}
+          />
+        ) : (
+          <PullRequestTimelineTab
+            activity={activity}
+            composer={composer}
+            canComment={canComment}
+            verdicts={verdicts}
+            target={`${pr.repository}#${pr.number}`}
+            refreshing={refreshing}
+            onRefresh={() => void refresh()}
+            onLinkPress={onLinkPress}
+            onScroll={onContentScroll}
+          />
+        )}
+      </View>
     </PaneBar>
   );
 }
@@ -379,24 +502,15 @@ function PullRequestMenu(props: {
   onCommand: (command: PullRequestMenuCommand) => void;
 }) {
   const iconColor = String(useUniwindTheme()["--color-header-foreground"]);
-  const toAction = (item: PullRequestMenuItem): MenuAction => ({
-    id: item.id,
-    title: item.title,
-    ...(item.subtitle ? { subtitle: item.subtitle } : {}),
-    ...(Platform.OS === "ios"
-      ? { image: typeof item.icon === "string" ? item.icon : item.icon.ios }
-      : {}),
-    attributes: { disabled: item.disabled ?? false, destructive: item.destructive ?? false },
-  });
   const actions =
     Platform.OS === "ios"
       ? props.groups.map((group, index): MenuAction => ({
           id: `group:${index}`,
           title: "",
           displayInline: true,
-          subactions: group.map(toAction),
+          subactions: group.map(toMenuAction),
         }))
-      : props.groups.flat().map(toAction);
+      : props.groups.flat().map(toMenuAction);
   return (
     <ControlPillMenu
       actions={actions}
@@ -437,9 +551,11 @@ function ActionStatus(props: { status: PullRequestActionStatus | null; onDismiss
     );
   }
   return (
-    <View
+    <Animated.View
+      entering={PR_FADE_IN}
+      layout={LAYOUT}
       accessibilityLiveRegion="polite"
-      className="mx-4 mb-2 flex-row items-center gap-2 rounded-lg bg-subtle px-3 py-2"
+      className="mx-4 mb-2 flex-row items-center gap-2 rounded-xl bg-subtle px-3 py-2"
     >
       {status.tone === "progress" ? (
         <ActivityIndicator size="small" color={iconColor} />
@@ -457,32 +573,41 @@ function ActionStatus(props: { status: PullRequestActionStatus | null; onDismiss
           <SymbolView name="xmark" size={14} tintColor={iconColor} type="monochrome" />
         </Pressable>
       ) : null}
-    </View>
+    </Animated.View>
   );
 }
 
-function StatePill(props: {
-  pr: Pick<PullRequestDetail, "state" | "isDraft" | "mergeability" | "url">;
-}) {
+function StatePill(props: { pr: Pick<PullRequestDetail, "state" | "isDraft" | "mergeability"> }) {
   const scheme = useColorScheme() === "dark" ? "dark" : "light";
   const presentation = resolvePullRequestPresentation(props.pr, scheme);
   return (
-    <View className="flex-row">
-      <View
-        accessibilityLabel={`Status: ${presentation.label}`}
-        className="flex-row items-center gap-1.5 rounded-full border border-border px-2.5 py-1"
-      >
-        <SymbolView
-          name={presentation.icon}
-          size={13}
-          tintColor={presentation.color}
-          type="monochrome"
-        />
-        <Text className="text-xs font-t3-bold" style={{ color: presentation.color }}>
-          {presentation.label}
-        </Text>
-      </View>
-    </View>
+    <PrPill
+      icon={presentation.icon}
+      label={presentation.label}
+      color={presentation.color}
+      accessibilityLabel={`Status: ${presentation.label}`}
+    />
+  );
+}
+
+/** The checks rollup beside the state, as the desktop header shows it next to the title. */
+function ChecksPill(props: { checks: PullRequestDetail["checks"] }) {
+  const colorFor = useChecksToneColor();
+  const summary = summarizePullRequestChecks(props.checks);
+  if (summary.tone === "none") return null;
+  return (
+    <PrPill
+      icon={
+        summary.tone === "success"
+          ? "checkmark.circle"
+          : summary.tone === "failure"
+            ? "xmark.circle"
+            : "clock"
+      }
+      label={summary.label}
+      color={colorFor(summary.tone)}
+      accessibilityLabel={`Checks: ${summary.label}`}
+    />
   );
 }
 
@@ -496,6 +621,7 @@ function PaneBar(props: {
   repository: string;
   number: number;
   menu?: ReactNode;
+  onLayoutWidth: (width: number) => void;
   children: ReactNode;
 }) {
   if (props.onBack) {
@@ -508,7 +634,10 @@ function PaneBar(props: {
           hideBottomBorder
           trailing={props.menu}
         />
-        <View className="flex-1 overflow-hidden rounded-t-[28px] bg-screen pt-4">
+        <View
+          onLayout={(event) => props.onLayoutWidth(event.nativeEvent.layout.width)}
+          className="flex-1 overflow-hidden rounded-t-[28px] bg-screen pt-4"
+        >
           {props.children}
         </View>
       </View>
@@ -516,7 +645,10 @@ function PaneBar(props: {
   }
 
   return (
-    <View className="flex-1 bg-screen">
+    <View
+      onLayout={(event) => props.onLayoutWidth(event.nativeEvent.layout.width)}
+      className="flex-1 bg-screen"
+    >
       <View className="min-h-12 flex-row items-center gap-1 pl-4 pr-1 pt-1">
         <Text
           numberOfLines={1}
@@ -532,41 +664,57 @@ function PaneBar(props: {
   );
 }
 
+/** A proportion of additions to deletions in five blocks, as the host's own diffstat draws it. */
+function DiffBlocks(props: {
+  additions: number;
+  deletions: number;
+  addColor: string;
+  deleteColor: string;
+}) {
+  const total = props.additions + props.deletions;
+  if (total === 0) return null;
+  const green = Math.round((props.additions / total) * 5);
+  return (
+    <View className="flex-row gap-0.5" accessibilityElementsHidden importantForAccessibility="no">
+      {[0, 1, 2, 3, 4].map((index) => (
+        <View
+          key={index}
+          className="size-2 rounded-[2px]"
+          style={{ backgroundColor: index < green ? props.addColor : props.deleteColor }}
+        />
+      ))}
+    </View>
+  );
+}
+
 /**
  * Who and when, which branches, and how big: the desktop header's line, with the base first and
  * the head it receives changes from after it. Split in two so neither wraps on a phone.
  */
 function HeaderFacts(props: {
   pr: Pick<
-    PullRequestDetail,
-    | "author"
-    | "headBranch"
-    | "baseBranch"
-    | "updatedAt"
-    | "additions"
-    | "deletions"
-    | "changedFiles"
-  >;
+    PullRequestPreview,
+    "headBranch" | "baseBranch" | "updatedAt" | "additions" | "deletions"
+  > & { changedFiles?: number };
+  author: PullRequestDetail["author"];
 }) {
   const { pr } = props;
   const iconColor = String(useUniwindTheme()["--color-icon-muted"]);
-  const login = pr.author?.login ?? "ghost";
+  const toneColor = useChecksToneColor();
+  // The host's diffstat inks, rather than the theme's accent, so additions always read green.
+  const addColor = toneColor("success");
+  const deleteColor = toneColor("failure");
+  const login = props.author?.login ?? "ghost";
   return (
-    <View className="gap-1.5">
-      <View className="flex-row items-center gap-1.5">
-        {pr.author?.avatarUrl ? (
-          <Image
-            source={{ uri: pr.author.avatarUrl }}
-            style={{ width: 18, height: 18, borderRadius: 9 }}
-            accessibilityIgnoresInvertColors
-          />
-        ) : null}
+    <View className="gap-2">
+      <View className="flex-row items-center gap-2">
+        <PrAvatar actor={props.author} size={20} />
         <Text numberOfLines={1} className="min-w-0 shrink text-[13px] text-foreground-muted">
           <Text className="text-[13px] font-t3-medium text-foreground-secondary">{login}</Text>
           {` · updated ${relativeTime(pr.updatedAt)}`}
         </Text>
       </View>
-      <View className="flex-row items-center gap-2">
+      <View className="flex-row items-center gap-3">
         <View
           accessible
           accessibilityLabel={`${pr.baseBranch} receives changes from ${pr.headBranch}`}
@@ -575,7 +723,7 @@ function HeaderFacts(props: {
           <Text
             numberOfLines={1}
             ellipsizeMode="middle"
-            className="max-w-[45%] shrink-0 rounded bg-subtle px-1.5 py-0.5 font-mono text-[11px] text-foreground-secondary"
+            className="max-w-[45%] shrink-0 rounded-md bg-subtle px-1.5 py-0.5 font-mono text-[11px] text-foreground-secondary"
           >
             {pr.baseBranch}
           </Text>
@@ -583,22 +731,97 @@ function HeaderFacts(props: {
           <Text
             numberOfLines={1}
             ellipsizeMode="middle"
-            className="min-w-0 shrink rounded bg-subtle px-1.5 py-0.5 font-mono text-[11px] text-foreground-secondary"
+            className="min-w-0 shrink rounded-md bg-subtle px-1.5 py-0.5 font-mono text-[11px] text-foreground-secondary"
           >
             {pr.headBranch}
           </Text>
         </View>
         <View
           accessible
-          accessibilityLabel={`${pr.changedFiles} changed ${pr.changedFiles === 1 ? "file" : "files"}, ${pr.additions} additions, ${pr.deletions} deletions`}
+          accessibilityLabel={`${pr.changedFiles === undefined ? "" : `${pr.changedFiles} changed ${pr.changedFiles === 1 ? "file" : "files"}, `}${pr.additions} additions, ${pr.deletions} deletions`}
           className="flex-row items-center gap-1.5"
         >
-          <SymbolView name="doc.text" size={12} tintColor={iconColor} type="monochrome" />
-          <Text className="font-mono text-[11px] text-foreground-muted">{pr.changedFiles}</Text>
-          <Text className="font-mono text-[11px] text-primary-text">+{pr.additions}</Text>
-          <Text className="font-mono text-[11px] text-danger-foreground">-{pr.deletions}</Text>
+          {pr.changedFiles === undefined ? null : (
+            <>
+              <SymbolView name="doc.text" size={12} tintColor={iconColor} type="monochrome" />
+              <Text className="font-mono text-[11px] text-foreground-muted">{pr.changedFiles}</Text>
+            </>
+          )}
+          <Text className="font-mono text-[11px]" style={{ color: addColor }}>
+            +{pr.additions}
+          </Text>
+          <Text className="font-mono text-[11px]" style={{ color: deleteColor }}>
+            -{pr.deletions}
+          </Text>
+          <DiffBlocks
+            additions={pr.additions}
+            deletions={pr.deletions}
+            addColor={addColor}
+            deleteColor={deleteColor}
+          />
         </View>
       </View>
+    </View>
+  );
+}
+
+/**
+ * The detail's shape before it arrives: the tapped row's own facts where the list passed them,
+ * then quiet placeholders where the merge box, tabs and description will be.
+ */
+function DetailSkeleton(props: {
+  preview: PullRequestPreview | null;
+  wide: boolean;
+  children?: ReactNode;
+}) {
+  const { preview } = props;
+  return (
+    <View accessibilityLabel="Loading pull request" className="flex-1">
+      <View className={cn("px-4", props.wide && "flex-row items-start gap-4")}>
+        <View className={cn("min-w-0 gap-2 pb-3", props.wide && "flex-1")}>
+          {preview ? (
+            <>
+              <View className="flex-row">
+                <StatePill pr={preview} />
+              </View>
+              <Text
+                numberOfLines={3}
+                className="text-[20px] font-t3-bold leading-[26px] text-foreground"
+              >
+                {preview.title}
+              </Text>
+              <HeaderFacts pr={preview} author={preview.author} />
+            </>
+          ) : (
+            <>
+              <PrSkeletonLine width={72} height={22} strong />
+              <PrSkeletonLine width="88%" height={20} strong />
+              <PrSkeletonLine width="56%" height={20} strong />
+              <PrSkeletonLine width="44%" />
+            </>
+          )}
+        </View>
+        <View
+          className={cn(
+            "h-28 rounded-2xl border border-border bg-card",
+            props.wide ? "w-80" : "mb-3",
+          )}
+        />
+      </View>
+      <View className="px-4 pb-3">
+        <View className="h-11 rounded-full bg-subtle" />
+      </View>
+      <View className="gap-2.5 border-t border-border px-4 pt-4">
+        <View className="flex-row items-center gap-2">
+          <ActivityIndicator size="small" />
+          <Text className="text-[13px] text-foreground-muted">Loading pull request...</Text>
+        </View>
+        <PrSkeletonLine width="94%" />
+        <PrSkeletonLine width="82%" />
+        <PrSkeletonLine width="88%" />
+        <PrSkeletonLine width="40%" />
+      </View>
+      {props.children}
     </View>
   );
 }

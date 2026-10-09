@@ -1,4 +1,4 @@
-import { EnvironmentId, type PullRequestRef } from "@t3tools/contracts";
+import { EnvironmentId, type PullRequestListEntry, type PullRequestRef } from "@t3tools/contracts";
 import { useNavigation, usePreventRemove, type StaticScreenProps } from "@react-navigation/native";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -15,7 +15,7 @@ import {
   usesPullRequestSplitView,
 } from "./pull-request-model";
 import { PrStateMessage } from "./pull-request-components";
-import { PullRequestDetailPane } from "./PullRequestDetailScreen";
+import { PullRequestDetailPane, type PullRequestPreview } from "./PullRequestDetailScreen";
 import { PullRequestListPane } from "./PullRequestListPane";
 
 /**
@@ -61,6 +61,7 @@ export function PullRequestsScreen(
   const [search, setSearch] = useState("");
   const [width, setWidth] = useState(0);
   const [selected, setSelected] = useState<PullRequestRef | null>(null);
+  const [preview, setPreview] = useState<PullRequestPreview | null>(null);
   const split = usesPullRequestSplitView(width);
   const showDetailOnly = selected !== null && !split;
   usePreventRemove(showDetailOnly, () => setSelected(null));
@@ -82,16 +83,15 @@ export function PullRequestsScreen(
       }),
     [savePreferences, environmentId],
   );
-  const onSelect = useCallback(
-    (entry: PullRequestRef) =>
-      setSelected({
-        projectId: entry.projectId,
-        repository: entry.repository,
-        number: entry.number,
-        ...(entry.host ? { host: entry.host } : {}),
-      }),
-    [],
-  );
+  const onSelect = useCallback((entry: PullRequestListEntry) => {
+    setSelected({
+      projectId: entry.projectId,
+      repository: entry.repository,
+      number: entry.number,
+      ...(entry.host ? { host: entry.host } : {}),
+    });
+    setPreview(entry);
+  }, []);
   const onEnvironmentChange = useCallback(
     (next: string) => {
       setSelectedEnvironment(next);
@@ -145,6 +145,7 @@ export function PullRequestsScreen(
                 key={JSON.stringify([environment, selected])}
                 environmentId={environment}
                 reference={selected}
+                preview={preview}
                 onBack={showDetailOnly ? () => setSelected(null) : undefined}
               />
             ) : (

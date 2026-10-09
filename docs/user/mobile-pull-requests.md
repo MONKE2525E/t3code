@@ -28,11 +28,24 @@ available.
 Select a pull request to read its **Summary** (description, checks, reviewers,
 labels, merge status), follow comments and commits in **Timeline**, or inspect
 changed files in **Code**. On a phone the pull request replaces the list and Back
-returns to it. On a wide screen, such as an unfolded foldable or a tablet, the
-list stays beside the selected pull request, and the open tab and any draft
-comment carry across folding and unfolding. Tap a long title to show all of it.
-Collapse **Description** or **Checks** to make room while reading. Markdown task
-lists show completed and incomplete checkboxes.
+returns to it. An unfolded foldable shows the pull request at full width, with the
+merge box beside the header and the Summary in two columns. On a tablet or another
+very wide screen the list stays beside the selected pull request. The open tab and
+any draft comment carry across folding and unfolding. Tap a long title to show all
+of it; the header shrinks to one line while you scroll. Collapse **Description** or
+**Checks** to make room while reading. Markdown task lists show completed and
+incomplete checkboxes. If the environment is slow to answer, the screen says so
+after a few seconds and offers **Retry** and **Open on GitHub**.
+
+The merge box under the header shows whether the pull request is ready, blocked
+by checks or conflicts, or already merged. Its button does the next step: merge
+with the chosen strategy, mark ready for review, enable auto-merge while checks
+run, or resolve conflicts in a thread. The arrow beside it picks the merge
+strategy and offers **Merge now**, **Disable auto-merge** and **Update branch**
+where they apply. On GitHub, **Merge as admin** merges past branch protection by
+running `gh pr merge --admin` on the connected environment as you. It needs the
+GitHub CLI and admin rights on the repository, and a session allowed to use
+terminals.
 
 The Code tab loads large changes a slice at a time; **Next files** continues and
 **First files** returns to the beginning. Collapse file headers or mark files as
@@ -41,7 +54,7 @@ viewed while reviewing the current pull request.
 The Timeline tab offers comments and supported review verdicts when your account
 has permission. Submission asks for confirmation. If it fails, your draft stays
 in the editor. The three-dot menu includes refresh, copy link or number, and
-supported draft, merge and close actions. Actions depend on the host and your
+supported draft and close actions. Actions depend on the host and your
 permissions; merging and closing ask for confirmation. **Open on host** remains
 available for content that the connected provider cannot supply.
 

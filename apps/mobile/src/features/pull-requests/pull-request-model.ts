@@ -110,10 +110,11 @@ export function matchesPullRequestQuery(entry: PullRequestListEntry, query: stri
   );
 }
 
-// Use the pane's available width: the persistent workspace sidebar already
-// consumes part of the unfolded screen.
+// The pull request screens hide the workspace sidebar, so this is the whole window. An unfolded
+// Fold (about 750dp) reads one pull request at full width in its wide layout; the list sits
+// beside it only where both get a usable width, as on a tablet or a landscape foldable.
 export function usesPullRequestSplitView(width: number) {
-  return width >= 680;
+  return width >= 840;
 }
 
 type PresentationScheme = "light" | "dark";

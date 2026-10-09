@@ -59,7 +59,8 @@ import {
   updateComposerDraftSettings,
 } from "../../state/use-composer-drafts";
 import { pullRequestActionConfirmation, type PullRequestMenuCommand } from "./pull-request-actions";
-import { pullRequestHandoffDraft } from "./pull-request-handoff";
+import { buildResolveConflictsHandoff, pullRequestHandoffDraft } from "./pull-request-handoff";
+import { usePullRequestAdminMerge } from "./usePullRequestAdminMerge";
 
 /** One line under the header saying how the last action went. Failures stay until replaced. */
 export interface PullRequestActionStatus {
@@ -88,6 +89,7 @@ export function usePullRequestDetailActions(input: {
   readonly activity: PullRequestActivity | null;
   readonly originThreadId: ThreadId | null;
   readonly refreshFromHost: () => Promise<void>;
+  readonly onSelectMergeMethod: (method: PullRequestMergeMethod) => void;
 }) {
   const { environmentId, reference, detail } = input;
   const navigation = useNavigation();
@@ -107,6 +109,7 @@ export function usePullRequestDetailActions(input: {
   const prepareThread = useAtomCommand(gitEnvironment.preparePullRequestThread, {
     reportFailure: false,
   });
+  const adminMerge = usePullRequestAdminMerge(environmentId);
   const [pendingAction, setPendingAction] = useState<PullRequestAction | null>(null);
   const [handoff, setHandoff] = useState<string | null>(null);
   const [linkPending, setLinkPending] = useState(false);
@@ -217,6 +220,25 @@ export function usePullRequestDetailActions(input: {
     }
   };
 
+  const performAdminMerge = async (mergeMethod: PullRequestMergeMethod) => {
+    if (busy.current || !detail) return;
+    busy.current = true;
+    setPendingAction("merge");
+    setStatus({ tone: "progress", title: "Merging as admin..." });
+    try {
+      const result = await adminMerge.run(detail, mergeMethod);
+      if (result.kind === "failed") {
+        setStatus({ tone: "failure", title: "Could not merge as admin", detail: result.message });
+        return;
+      }
+      setStatus({ tone: "success", title: "Merged as admin" });
+      await input.refreshFromHost();
+    } finally {
+      busy.current = false;
+      setPendingAction(null);
+    }
+  };
+
   /** Leaves the task in a composer and shows it there; nothing is sent. */
   const writeTask = (draftKey: string, task: FixFindingsHandoff) => {
     const draft = getComposerDraftSnapshot(draftKey);
@@ -290,20 +312,28 @@ export function usePullRequestDetailActions(input: {
     if (!handOffToThread(task)) openNewThreadDraft(task);
   };
 
-  const fixFindings = async () => {
+  const fixFindings = () => {
     if (busy.current || !detail || !handoffInput) return;
-    const task = buildFixFindingsHandoff({
-      ...handoffInput,
-      reviewThreads: input.activity?.reviewThreads ?? [],
-      comments: input.activity?.comments ?? [],
-      checks: detail.checks,
-      commentsTruncated: input.activity?.commentsTruncated ?? true,
-    });
+    return handOffWithCheckout(
+      "findings",
+      buildFixFindingsHandoff({
+        ...handoffInput,
+        reviewThreads: input.activity?.reviewThreads ?? [],
+        comments: input.activity?.comments ?? [],
+        checks: detail.checks,
+        commentsTruncated: input.activity?.commentsTruncated ?? true,
+      }),
+    );
+  };
+
+  /** A task that needs the code: into this thread, or a new thread on a fresh checkout. */
+  const handOffWithCheckout = async (kind: string, task: FixFindingsHandoff) => {
+    if (busy.current || !detail) return;
     if (handOffToThread(task)) return;
     // Outside a thread the agent needs the code: check the pull request out into its own
     // worktree first, as the desktop does, so the new thread starts on the pull request.
     busy.current = true;
-    setHandoff("findings");
+    setHandoff(kind);
     try {
       setStatus({ tone: "progress", title: "Preparing the pull request checkout..." });
       const prepared = await prepareThread({
@@ -371,8 +401,22 @@ export function usePullRequestDetailActions(input: {
           return void perform(command.action);
         case "merge":
           return void perform("merge", command.method);
+        case "admin-merge":
+          return void performAdminMerge(command.method);
+        case "select-merge-method":
+          return input.onSelectMergeMethod(command.method);
         case "enable-auto-merge":
           return void perform("enable-auto-merge", command.method);
+        case "resolve-conflicts":
+          return void handOffWithCheckout(
+            "conflicts",
+            buildResolveConflictsHandoff({
+              number: detail.number,
+              url: detail.url,
+              headBranch: detail.headBranch,
+              baseBranch: detail.baseBranch,
+            }),
+          );
         case "open-host":
           return void tryOpenExternalUrl(detail.url, "pull-request");
         case "copy-link":
@@ -391,6 +435,7 @@ export function usePullRequestDetailActions(input: {
     status,
     dismissStatus: () => setStatus(null),
     pendingAction,
+    canAdminMerge: adminMerge.canAdminMerge,
     handoffPending: handoff !== null,
     thread:
       threadRef === null || thread === null ? null : { linked: linkedHere, canLink: canLinkHere },
