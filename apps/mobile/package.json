@@ -113,6 +113,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native": "0.88.0-rc.3",
+    "react-native-enriched-markdown": "github:software-mansion/enriched-markdown#97e1bfd3c1cddf1be9766ffb168c2bfeb87533a1&path:packages/react-native-enriched-markdown",
     "react-native-gesture-handler": "~3.2.1",
     "react-native-image-viewing": "^0.2.2",
     "react-native-keyboard-controller": "1.22.6",

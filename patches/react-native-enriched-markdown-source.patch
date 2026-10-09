@@ -1,0 +1,51 @@
+diff --git a/android/src/main/jni/CMakeLists.txt b/android/src/main/jni/CMakeLists.txt
+index 2bdaa07a01..53a7dacb18 100644
+--- a/android/src/main/jni/CMakeLists.txt
++++ b/android/src/main/jni/CMakeLists.txt
+@@ -6,6 +6,9 @@ set(LIB_TARGET_NAME react_codegen_${LIB_LITERAL})
+ 
+ set(LIB_ANDROID_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../..)
+ set(LIB_ANDROID_GENERATED_JNI_DIR ${LIB_ANDROID_DIR}/generated/jni)
++if(NOT EXISTS "${LIB_ANDROID_GENERATED_JNI_DIR}")
++  set(LIB_ANDROID_GENERATED_JNI_DIR ${LIB_ANDROID_DIR}/build/generated/source/codegen/jni)
++endif()
+ set(LIB_ANDROID_GENERATED_COMPONENTS_DIR ${LIB_ANDROID_GENERATED_JNI_DIR}/react/renderer/components/${LIB_LITERAL})
+ 
+ # cpp/ is a symlink to packages/core/cpp in the monorepo; published tarballs
+@@ -48,6 +51,9 @@ set_target_properties(md4c_lib PROPERTIES
+ 
+ file(GLOB LIB_CODEGEN_SRCS CONFIGURE_DEPENDS ${LIB_ANDROID_GENERATED_JNI_DIR}/*.cpp ${LIB_ANDROID_GENERATED_COMPONENTS_DIR}/*.cpp)
+ file(GLOB LIB_CUSTOM_JNI_SRCS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/react/renderer/components/${LIB_LITERAL}/*.cpp)
++if(EXISTS "${LIB_ANDROID_GENERATED_JNI_DIR}/${LIB_LITERAL}-generated.cpp")
++  list(REMOVE_ITEM LIB_CUSTOM_JNI_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/${LIB_LITERAL}.cpp")
++endif()
+ 
+ add_library(
+   ${LIB_TARGET_NAME}
+diff --git a/package.json b/package.json
+index 42a5cdd308..96d6410ad9 100644
+--- a/package.json
++++ b/package.json
+@@ -2,10 +2,10 @@
+   "name": "react-native-enriched-markdown",
+   "version": "1.1.1",
+   "description": "Markdown-based Rich Text solution for React Native",
+-  "main": "./lib/module/index",
+-  "module": "./lib/module/index",
++  "main": "./src/index.tsx",
++  "module": "./src/index.tsx",
+   "source": "./src/index.tsx",
+-  "types": "./lib/typescript/src/index.d.ts",
++  "types": "./src/index.tsx",
+   "files": [
+     "src",
+     "lib",
+@@ -165,7 +165,7 @@
+         }
+       }
+     },
+-    "includesGeneratedCode": true
++    "includesGeneratedCode": false
+   },
+   "create-react-native-library": {
+     "type": "fabric-view",
