@@ -3,6 +3,28 @@
 Use a new thread for a separate task. Choose **New worktree** when its code changes
 need a separate branch and working directory.
 
+## Grok Bots
+
+In this custom build, open **Settings → Grok Bots** and set up the connection.
+The environment needs Node.js, npm, and a signed-in Grok Bot desktop app. Setup
+installs the unofficial `grok-bot-cli` bridge inside this T3 instance's home.
+When connecting remotely, the Grok Bot desktop session must be on the server's
+computer.
+
+Open a bot from the collapsible **Grok Bots** section above your threads.
+Conversations stay in Grok Bot and persist across tasks. Pinning and featuring
+control their placement in T3 Code. Name, label, description, notification, and
+visibility changes also apply in Grok Bot.
+
+Link an existing pull request from the bot's profile using a project and PR URL.
+A confirmed merge removes that association and keeps the bot. Closed PRs stay
+linked until you remove them. If message delivery is uncertain, refresh the
+conversation before sending again.
+
+The custom desktop is named **T3 Code plus Grokbot** and defaults to
+`~/.t3-grokbot`, with its own browser profile and launcher. Remote computer
+control and Grok Bot routines remain in the Grok Bot app.
+
 ## Start a thread
 
 On web and desktop, a new thread keeps the current project and carries your model

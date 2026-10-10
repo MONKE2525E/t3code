@@ -31,6 +31,21 @@ import {
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
+  it("separates bot reads, messaging, and environment settings", () => {
+    for (const method of [
+      WS_METHODS.grokBotsStatus,
+      WS_METHODS.grokBotsList,
+      WS_METHODS.grokBotsRead,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+    for (const method of [WS_METHODS.grokBotsSend, WS_METHODS.grokBotsLink]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+    for (const method of [WS_METHODS.grokBotsSetup, WS_METHODS.grokBotsUpdate]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSettingsWriteScope);
+    }
+  });
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });

@@ -22,6 +22,17 @@ import {
   ChatGptHandoffState,
 } from "./providerSetup.ts";
 import * as Schema from "effect/Schema";
+import {
+  GrokBot,
+  GrokBotStatus,
+  GrokBotError,
+  GrokBotReadInput,
+  GrokBotConversation,
+  GrokBotSendInput,
+  GrokBotSendResult,
+  GrokBotUpdateInput,
+  GrokBotLinkInput,
+} from "./grokBot.ts";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
@@ -363,6 +374,13 @@ import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
 export const WS_METHODS = {
+  grokBotsStatus: "grokBots.status",
+  grokBotsSetup: "grokBots.setup",
+  grokBotsList: "grokBots.list",
+  grokBotsRead: "grokBots.read",
+  grokBotsSend: "grokBots.send",
+  grokBotsUpdate: "grokBots.update",
+  grokBotsLink: "grokBots.link",
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
@@ -1828,6 +1846,41 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 ) {}
 
 export const WsRpcGroup = RpcGroup.make(
+  Rpc.make(WS_METHODS.grokBotsStatus, {
+    payload: Schema.Struct({}),
+    success: GrokBotStatus,
+    error: GrokBotError,
+  }),
+  Rpc.make(WS_METHODS.grokBotsSetup, {
+    payload: Schema.Struct({}),
+    success: GrokBotStatus,
+    error: GrokBotError,
+  }),
+  Rpc.make(WS_METHODS.grokBotsList, {
+    payload: Schema.Struct({}),
+    success: Schema.Array(GrokBot),
+    error: GrokBotError,
+  }),
+  Rpc.make(WS_METHODS.grokBotsRead, {
+    payload: GrokBotReadInput,
+    success: GrokBotConversation,
+    error: GrokBotError,
+  }),
+  Rpc.make(WS_METHODS.grokBotsSend, {
+    payload: GrokBotSendInput,
+    success: GrokBotSendResult,
+    error: GrokBotError,
+  }),
+  Rpc.make(WS_METHODS.grokBotsUpdate, {
+    payload: GrokBotUpdateInput,
+    success: GrokBot,
+    error: GrokBotError,
+  }),
+  Rpc.make(WS_METHODS.grokBotsLink, {
+    payload: GrokBotLinkInput,
+    success: GrokBot,
+    error: GrokBotError,
+  }),
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

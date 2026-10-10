@@ -23,6 +23,7 @@ import {
   PaletteIcon,
   SearchIcon,
   Settings2Icon,
+  SparklesIcon,
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -84,6 +85,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/snap-shot": SnapShotIcon,
   "/settings/providers": BotIcon,
   "/settings/integrations": BlocksIcon,
+  "/settings/grok-bots": SparklesIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/storage": HardDriveIcon,

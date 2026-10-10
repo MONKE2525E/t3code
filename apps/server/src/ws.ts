@@ -224,6 +224,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as GrokBotService from "./grokBot/GrokBotService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -1224,6 +1225,7 @@ const layerWsRpc = (
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
+      const grokBots = yield* GrokBotService.GrokBotService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
@@ -2461,6 +2463,13 @@ const layerWsRpc = (
               ),
           ),
         [WS_METHODS.pullRequestsList]: (input) => pullRequests.list(input),
+        [WS_METHODS.grokBotsStatus]: () => grokBots.status,
+        [WS_METHODS.grokBotsSetup]: () => grokBots.setup,
+        [WS_METHODS.grokBotsList]: () => grokBots.list,
+        [WS_METHODS.grokBotsRead]: (input) => grokBots.read(input.botId),
+        [WS_METHODS.grokBotsSend]: (input) => grokBots.send(input),
+        [WS_METHODS.grokBotsUpdate]: (input) => grokBots.update(input),
+        [WS_METHODS.grokBotsLink]: (input) => grokBots.link(input),
         [WS_METHODS.pullRequestsListStats]: (input) => pullRequests.listStats(input),
         [WS_METHODS.pullRequestsRoutingIdentity]: (input) => pullRequests.routingIdentity(input),
         [WS_METHODS.pullRequestsRouting]: (input) => pullRequests.routing(input),

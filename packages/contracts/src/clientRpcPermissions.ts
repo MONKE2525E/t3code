@@ -10,6 +10,10 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.grokBotsSetup]: AuthSettingsWriteScope,
+  [WS_METHODS.grokBotsUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.grokBotsSend]: AuthOrchestrationOperateScope,
+  [WS_METHODS.grokBotsLink]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
