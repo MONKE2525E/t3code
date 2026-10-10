@@ -10,6 +10,7 @@ import {
   GrokBotPullRequest,
   type PullRequestRef,
 } from "@t3tools/contracts";
+import { parsePinnedAgentIds } from "./desktopPins.ts";
 import { defaultGrokBotAvatarColor, defaultGrokBotAvatarShape } from "./defaultAvatar.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -146,6 +147,16 @@ const make = Effect.gen(function* () {
       yield* fs.writeFileString(temp, encoded, { mode: 0o600 });
       yield* fs.rename(temp, preferencesPath);
     }).pipe(Effect.mapError(storageError));
+  // Best effort: a missing or unreadable desktop app just means nothing is pinned yet.
+  const readDesktopPinned = Effect.gen(function* () {
+    const directory = path.join(appData, "sand-client-persistence");
+    for (const name of yield* fs.readDirectory(directory)) {
+      const bytes = yield* fs.readFile(path.join(directory, name));
+      const ids = parsePinnedAgentIds(new TextDecoder("latin1").decode(bytes));
+      if (ids.length > 0) return new Set(ids);
+    }
+    return new Set<string>();
+  }).pipe(Effect.orElseSucceed(() => new Set<string>()));
   const invocation = Effect.gen(function* () {
     return (yield* fs.exists(managedCli))
       ? {
@@ -209,7 +220,11 @@ const make = Effect.gen(function* () {
   const rawList = cli(["bots", "list", "--gateway", "--json"]).pipe(
     Effect.flatMap((text) => decodeRoster(text).pipe(Effect.mapError(invalidResponse))),
   );
-  const decorate = (bot: typeof RawBot.Type, preferences: Preferences): GrokBot => ({
+  const decorate = (
+    bot: typeof RawBot.Type,
+    preferences: Preferences,
+    desktopPinned: ReadonlySet<string>,
+  ): GrokBot => ({
     id: bot.id,
     name: bot.name,
     label: bot.title ?? "",
@@ -218,7 +233,7 @@ const make = Effect.gen(function* () {
     avatarColor: bot.avatarColor ?? defaultGrokBotAvatarColor(bot.id),
     notificationEnabled: bot.notifyOnAgentUpdates ?? true,
     hidden: bot.hiddenFromSidebar ?? false,
-    pinned: preferences[bot.id]?.pinned ?? true,
+    pinned: preferences[bot.id]?.pinned ?? desktopPinned.has(bot.id),
     featured: preferences[bot.id]?.featured ?? false,
     pullRequests: preferences[bot.id]?.pullRequests ?? [],
   });
@@ -269,7 +284,10 @@ const make = Effect.gen(function* () {
   const list = Effect.gen(function* () {
     const bots = yield* rawList;
     const preferences = yield* reconcile;
-    return bots.map((bot) => decorate(bot, preferences));
+    const desktopPinned = bots.some((bot) => preferences[bot.id]?.pinned === undefined)
+      ? yield* readDesktopPinned
+      : new Set<string>();
+    return bots.map((bot) => decorate(bot, preferences, desktopPinned));
   });
   const find = (botId: string) =>
     list.pipe(
@@ -330,13 +348,15 @@ const make = Effect.gen(function* () {
       if (input.notificationEnabled !== undefined)
         args.push("--notify", input.notificationEnabled ? "on" : "off");
       if (input.hidden !== undefined) args.push("--hidden", input.hidden ? "on" : "off");
+      if (input.avatarShape !== undefined) args.push("--avatar-shape", input.avatarShape);
+      if (input.avatarColor !== undefined) args.push("--avatar-color", input.avatarColor);
       if (args.length > 5) yield* cli([...args, "--", input.botId]);
       if (input.pinned !== undefined || input.featured !== undefined)
         yield* lock.withPermits(1)(
           Effect.gen(function* () {
             const preferences = { ...(yield* load) };
             const current = preferences[input.botId] ?? {
-              pinned: true,
+              pinned: (yield* readDesktopPinned).has(input.botId),
               featured: false,
               pullRequests: [],
             };
@@ -362,7 +382,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const preferences = { ...(yield* load) };
           const current = preferences[input.botId] ?? {
-            pinned: true,
+            pinned: (yield* readDesktopPinned).has(input.botId),
             featured: false,
             pullRequests: [],
           };

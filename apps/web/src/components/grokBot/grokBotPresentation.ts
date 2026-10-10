@@ -11,30 +11,26 @@ import {
   type GrokBotAvatarKind,
 } from "./grokBotAvatarShapes";
 
+/** The main bot (starred in Grok Bot) leads; everyone else sorts by name. */
 export function compareGrokBots(left: GrokBot, right: GrokBot): number {
-  if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+  if (left.featured !== right.featured) return left.featured ? -1 : 1;
   return left.name.localeCompare(right.name);
 }
 
-/** Featured tiles sit above the list; hidden bots stay out of the roster. */
+/** Pinned bots become tiles above the list; hidden bots stay out of the roster. */
 export function partitionGrokBotRoster(bots: readonly GrokBot[]): {
-  readonly featured: readonly GrokBot[];
+  readonly pinned: readonly GrokBot[];
   readonly rows: readonly GrokBot[];
 } {
   const visible = bots.filter((bot) => !bot.hidden);
-  const featured = visible.filter((bot) => bot.featured).toSorted(compareGrokBots);
-  const featuredIds = new Set(featured.map((bot) => bot.id));
   return {
-    featured,
-    rows: visible.filter((bot) => !featuredIds.has(bot.id)).toSorted(compareGrokBots),
+    pinned: visible.filter((bot) => bot.pinned).toSorted(compareGrokBots),
+    rows: visible.filter((bot) => !bot.pinned).toSorted(compareGrokBots),
   };
 }
 
 export function sortGrokBotsForEditor(bots: readonly GrokBot[]): readonly GrokBot[] {
-  return bots.toSorted((left, right) => {
-    if (left.featured !== right.featured) return left.featured ? -1 : 1;
-    return compareGrokBots(left, right);
-  });
+  return bots.toSorted(compareGrokBots);
 }
 
 export function grokBotFailureMessage(error: unknown): string {
@@ -143,8 +139,11 @@ export function resolveGrokBotSettingsEnvironment(input: {
       ? { kind: "environment", environmentId }
       : { kind: "disconnected", environmentId };
   }
-  return input.connectedEnvironmentIds.length === 0
-    ? { kind: "no-environment" }
+  const [only, ...others] = input.connectedEnvironmentIds;
+  if (only === undefined) return { kind: "no-environment" };
+  // With a single environment there is nothing to choose.
+  return others.length === 0
+    ? { kind: "environment", environmentId: EnvironmentId.make(only) }
     : { kind: "choose-environment" };
 }
 

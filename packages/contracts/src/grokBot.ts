@@ -51,6 +51,8 @@ export const GrokBotUpdateInput = Schema.Struct({
   name: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
   label: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
   description: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(16000))),
+  avatarShape: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(32))),
+  avatarColor: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(32))),
   notificationEnabled: Schema.optionalKey(Schema.Boolean),
   hidden: Schema.optionalKey(Schema.Boolean),
   pinned: Schema.optionalKey(Schema.Boolean),

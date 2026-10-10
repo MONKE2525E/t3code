@@ -115,7 +115,7 @@ it.layer(NodeServices.layer)("Grok Bot bridge", (it) => {
       ];
       const conversation = yield* service.read(bot.id);
       assert.strictEqual(conversation.bot.label, "Builder");
-      assert.strictEqual(conversation.bot.pinned, true);
+      assert.strictEqual(conversation.bot.pinned, false);
       assert.deepStrictEqual(
         conversation.messages.map((entry) => [entry.role, entry.text]),
         [
@@ -146,9 +146,25 @@ it.layer(NodeServices.layer)("Grok Bot bridge", (it) => {
       assert.strictEqual(saved?.name, bot.name);
     }),
   );
+  it.effect("passes a new look through to the Grok Bot profile", () =>
+    Effect.gen(function* () {
+      const { service, calls } = yield* fixture;
+      yield* service.update({ botId: bot.id, avatarShape: "cloud", avatarColor: "blue" });
+      const args = calls.find((call) => call.args.includes("update"))?.args ?? [];
+      assert.deepStrictEqual(args.slice(args.indexOf("--avatar-shape")), [
+        "--avatar-shape",
+        "cloud",
+        "--avatar-color",
+        "blue",
+        "--",
+        bot.id,
+      ]);
+    }),
+  );
   it.effect("removes only a merged PR association while retaining the pinned bot", () =>
     Effect.gen(function* () {
       const { service, remote } = yield* fixture;
+      yield* service.update({ botId: bot.id, pinned: true });
       const linked = yield* service.link({ botId: bot.id, reference });
       assert.strictEqual(linked.pullRequests.length, 1);
       remote.heldPrState = "open";

@@ -1,6 +1,6 @@
 import type { GrokBot } from "@t3tools/contracts";
 import { StarIcon } from "lucide-react";
-import { type CSSProperties, useId } from "react";
+import { type CSSProperties, useEffect, useId, useRef } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -16,9 +16,22 @@ import type { GrokBotActivity } from "./grokBotActivity";
 import { GROK_BOT_AVATAR_COLORS } from "./grokBotAvatarShapes";
 import { resolveGrokBotAvatarFill, resolveGrokBotAvatarKind } from "./grokBotPresentation";
 
-const SIZE_PX = { xs: 24, sm: 32, md: 40, lg: 72 } as const;
+const SIZE_PX = { xs: 24, sm: 32, md: 40, lg: 56, xl: 80 } as const;
 
-const RESTING_CLIP = recipeByName("Idle_B");
+const IDLE_CLIP = recipeByName("Idle_B");
+/**
+ * The app's resting bots hold the start of its Idle_B clip, turned a little up
+ * and to the right: the same clip with its rotation pinned to that glance.
+ */
+const RESTING_CLIP = {
+  ...IDLE_CLIP,
+  name: "GrokBotResting",
+  tracks: {
+    ...IDLE_CLIP.tracks,
+    rotation: [{ t: 0, v: [-18, 20, 0], ease: [0.42, 0, 0.58, 1] }],
+    expression: [],
+  },
+};
 
 // Eyes are cut out of the body, so they show whatever is behind the avatar.
 const APPEARANCE = createAppearance("var(--grok-bot-ink)");
@@ -41,22 +54,35 @@ export function GrokBotAvatar({
   size = "md",
   featured = false,
   state,
+  spinSignal = 0,
   className,
 }: {
   readonly bot: Pick<GrokBot, "name" | "avatarShape" | "avatarColor">;
   readonly size?: keyof typeof SIZE_PX;
   readonly featured?: boolean;
   readonly state?: GrokBotActivity | undefined;
+  /** Changes to this number make the bot do a spin, as when its look is edited. */
+  readonly spinSignal?: number;
   readonly className?: string;
 }) {
   const pixels = SIZE_PX[size];
   const id = `grok-bot-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const kind = resolveGrokBotAvatarKind(bot.avatarShape);
+  const renderer = useRef<{ poke: (kind: "spin" | "bounce" | "nod") => void } | null>(null);
+  const lastSpin = useRef(spinSignal);
+  useEffect(() => {
+    if (spinSignal === lastSpin.current) return;
+    lastSpin.current = spinSignal;
+    renderer.current?.poke("spin");
+  }, [spinSignal]);
   const body = bodyForShape(kind);
   return (
     <span
       aria-hidden
-      className={cn("relative inline-flex shrink-0", className)}
+      className={cn(
+        "relative inline-flex shrink-0 [&_svg:not([class*='size-'])]:size-full!",
+        className,
+      )}
       style={
         {
           width: pixels,
@@ -66,6 +92,7 @@ export function GrokBotAvatar({
       }
     >
       <BotRenderer
+        ref={renderer}
         // Remount between rest and activity: the engine's own rest pose is a
         // tilted logo pose, while the app's resting bots hold the first frame
         // of the Idle_B clip (upright, eyes looking up).

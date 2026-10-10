@@ -1,7 +1,7 @@
 // @ts-nocheck -- generated, minified third-party code
 /* eslint-disable -- generated, minified third-party code */
 // Extracted from the installed Grok Bot 0.68.1 renderer (Motion Lab engine). Proprietary to its
-// authors; kept in this private fork only, never submitted upstream. Regenerate, don't hand-edit.
+// authors; kept in this private fork only, never submitted upstream.
 import * as k from "react";
 import * as M from "react/jsx-runtime";
 function Oe(e) {

@@ -11,10 +11,14 @@ installs the unofficial `grok-bot-cli` bridge inside this T3 instance's home.
 When connecting remotely, the Grok Bot desktop session must be on the server's
 computer.
 
-Open a bot from the collapsible **Grok Bots** section above your threads.
-Conversations stay in Grok Bot and persist across tasks. Pinning and featuring
-control their placement in T3 Code. Name, label, description, notification, and
-visibility changes also apply in Grok Bot.
+Open a bot from the collapsible **Grok Bots** section under the search field.
+Conversations stay in Grok Bot and persist across tasks. Pinned bots show as
+tiles at the top; pin or hide a bot from its **...** menu. Bots you pinned in the
+Grok Bot desktop app start out pinned. The star marks your main bot and is not
+editable here. Look, name, role, instructions, notification, and visibility
+changes also apply in Grok Bot. Edit them in **Settings → Grok Bots**, where the
+first scope picker chooses the bot; click the bot to change its shape and color.
+A bot only moves while it is doing something, such as sending or replying.
 
 Link an existing pull request from the bot's profile using a project and PR URL.
 A confirmed merge removes that association and keeps the bot. Closed PRs stay

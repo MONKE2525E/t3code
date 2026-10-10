@@ -42,23 +42,23 @@ function bot(partial: {
 }
 
 describe("partitionGrokBotRoster", () => {
-  it("puts featured bots in tiles and keeps hidden bots out", () => {
+  it("puts pinned bots in tiles, the main bot first, and keeps hidden bots out", () => {
     const roster = partitionGrokBotRoster([
-      bot({ id: "a", name: "Alpha", featured: true }),
+      bot({ id: "a", name: "Alpha", pinned: true }),
       bot({ id: "b", name: "Beta" }),
-      bot({ id: "c", name: "Hidden", hidden: true, featured: true }),
-      bot({ id: "d", name: "Pinned", pinned: true }),
+      bot({ id: "c", name: "Hidden", hidden: true, pinned: true }),
+      bot({ id: "d", name: "Main", pinned: true, featured: true }),
     ]);
-    expect(roster.featured.map((entry) => entry.id)).toEqual(["a"]);
-    expect(roster.rows.map((entry) => entry.id)).toEqual(["d", "b"]);
+    expect(roster.pinned.map((entry) => entry.id)).toEqual(["d", "a"]);
+    expect(roster.rows.map((entry) => entry.id)).toEqual(["b"]);
   });
 });
 
 describe("sortGrokBotsForEditor", () => {
-  it("orders featured, then pinned, then name", () => {
+  it("orders the main bot first, then name", () => {
     const sorted = sortGrokBotsForEditor([
       bot({ id: "c", name: "Charlie" }),
-      bot({ id: "a", name: "Alpha", pinned: true }),
+      bot({ id: "a", name: "Alpha" }),
       bot({ id: "b", name: "Bravo", featured: true }),
     ]);
     expect(sorted.map((entry) => entry.id)).toEqual(["b", "a", "c"]);
@@ -66,9 +66,9 @@ describe("sortGrokBotsForEditor", () => {
 });
 
 describe("compareGrokBots", () => {
-  it("pins first", () => {
+  it("puts the main bot first", () => {
     expect(
-      compareGrokBots(bot({ id: "a", name: "A" }), bot({ id: "b", name: "B", pinned: true })),
+      compareGrokBots(bot({ id: "a", name: "A" }), bot({ id: "b", name: "B", featured: true })),
     ).toBe(1);
   });
 });

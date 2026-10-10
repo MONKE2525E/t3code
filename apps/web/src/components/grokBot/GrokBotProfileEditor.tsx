@@ -5,8 +5,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, GrokBot, PullRequestRef } from "@t3tools/contracts";
-import { EyeOffIcon, LinkIcon, PinIcon, StarIcon, Trash2Icon } from "lucide-react";
-import { useCallback, useState } from "react";
+import { LinkIcon, Trash2Icon } from "lucide-react";
+import { type ReactNode, useCallback, useState } from "react";
 
 import { DraftInput } from "~/components/ui/draft-input";
 import { Button } from "~/components/ui/button";
@@ -21,12 +21,11 @@ import {
 } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
-import { Badge } from "~/components/ui/badge";
 import { cn } from "~/lib/utils";
 import { grokBotsLink, grokBotsUpdate } from "~/state/grokBots";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { GrokBotAvatar } from "./GrokBotAvatar";
+import { GrokBotAppearancePicker } from "./GrokBotAppearancePicker";
 import {
   grokBotFailureMessage,
   grokBotPullRequestRefFromUrl,
@@ -52,6 +51,17 @@ export function GrokBotProfileEditor({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [description, setDescription] = useState(bot.description);
+  // Show a new look right away; the roster catches up after the Grok Bot round trip.
+  const [pendingLook, setPendingLook] = useState<{ shape: string; color: string } | null>(null);
+  const [spinSignal, setSpinSignal] = useState(0);
+  if (
+    pendingLook !== null &&
+    pendingLook.shape === bot.avatarShape &&
+    pendingLook.color === bot.avatarColor
+  ) {
+    setPendingLook(null);
+  }
+  const look = pendingLook ?? { shape: bot.avatarShape, color: bot.avatarColor };
 
   const save = useCallback(
     async (patch: {
@@ -61,9 +71,10 @@ export function GrokBotProfileEditor({
       notificationEnabled?: boolean;
       hidden?: boolean;
       pinned?: boolean;
-      featured?: boolean;
+      avatarShape?: string;
+      avatarColor?: string;
     }) => {
-      if (!canUpdate) return;
+      if (!canUpdate) return false;
       setPending(true);
       setError(null);
       const result = await updateBot({
@@ -72,12 +83,26 @@ export function GrokBotProfileEditor({
       });
       setPending(false);
       if (result._tag === "Failure") {
-        if (isAtomCommandInterrupted(result)) return;
-        setError(grokBotFailureMessage(squashAtomCommandFailure(result)));
+        if (!isAtomCommandInterrupted(result)) {
+          setError(grokBotFailureMessage(squashAtomCommandFailure(result)));
+        }
+        return false;
       }
+      return true;
     },
     [bot.id, canUpdate, environmentId, updateBot],
   );
+
+  const changeLook = (patch: { avatarShape?: string; avatarColor?: string }) => {
+    setPendingLook({
+      shape: patch.avatarShape ?? look.shape,
+      color: patch.avatarColor ?? look.color,
+    });
+    setSpinSignal((current) => current + 1);
+    void save(patch).then((saved) => {
+      if (!saved) setPendingLook(null);
+    });
+  };
 
   const toggleLink = useCallback(
     async (reference: PullRequestRef, remove = false) => {
@@ -98,18 +123,24 @@ export function GrokBotProfileEditor({
   );
 
   return (
-    <div className={cn("flex flex-col gap-5", compact && "gap-4")}>
-      <div className="flex flex-col items-center gap-3">
-        <GrokBotAvatar bot={bot} size="lg" featured={bot.featured} />
-        {bot.label.trim().length > 0 ? (
-          <Badge size="sm" variant="secondary">
-            {bot.label}
-          </Badge>
-        ) : null}
+    <div className={cn("flex flex-col gap-6", compact && "gap-5")}>
+      <div className="flex items-center gap-3">
+        <GrokBotAppearancePicker
+          shape={look.shape}
+          color={look.color}
+          name={bot.name}
+          spinSignal={spinSignal}
+          disabled={!canUpdate || pending}
+          onSelectShape={(avatarShape) => changeLook({ avatarShape })}
+          onSelectColor={(avatarColor) => changeLook({ avatarColor })}
+        />
+        <div className="min-w-0">
+          <p className="truncate text-base font-medium">{bot.name}</p>
+          <p className="text-xs text-muted-foreground">Click the bot to change how it looks.</p>
+        </div>
       </div>
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor={`grok-bot-name-${identity}`}>Name</Label>
+      <EditorGroup title="Profile">
+        <EditorField htmlFor={`grok-bot-name-${identity}`} label="Name">
           <DraftInput
             id={`grok-bot-name-${identity}`}
             size="sm"
@@ -122,9 +153,12 @@ export function GrokBotProfileEditor({
               void save({ name: next });
             }}
           />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor={`grok-bot-label-${identity}`}>Label (optional)</Label>
+        </EditorField>
+        <EditorField
+          htmlFor={`grok-bot-label-${identity}`}
+          label="Role"
+          hint="Shown next to the name in the sidebar."
+        >
           <DraftInput
             id={`grok-bot-label-${identity}`}
             size="sm"
@@ -133,9 +167,12 @@ export function GrokBotProfileEditor({
             disabled={!canUpdate || pending}
             onCommit={(label) => void save({ label })}
           />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor={`grok-bot-description-${identity}`}>Description</Label>
+        </EditorField>
+        <EditorField
+          htmlFor={`grok-bot-description-${identity}`}
+          label="Instructions"
+          hint="What this bot does and how it should behave. Saved when you click away."
+        >
           <Textarea
             id={`grok-bot-description-${identity}`}
             size="sm"
@@ -147,54 +184,31 @@ export function GrokBotProfileEditor({
               if (description !== bot.description) void save({ description });
             }}
           />
-        </div>
-      </div>
-      <div className="flex flex-col gap-2 rounded-xl border border-border/60 bg-card/40 p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm font-medium">Notifications</p>
-            <p className="text-xs text-muted-foreground">
-              Get notified when this bot finishes or needs input.
-            </p>
-          </div>
-          <Switch
-            size="sm"
-            checked={bot.notificationEnabled}
-            disabled={!canUpdate || pending}
-            onCheckedChange={(notificationEnabled) => void save({ notificationEnabled })}
-            aria-label="Notifications"
-          />
-        </div>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="xs"
-          variant={bot.featured ? "default" : "outline"}
+        </EditorField>
+      </EditorGroup>
+      <EditorGroup title="Sidebar and notifications">
+        <EditorSwitch
+          title="Pinned"
+          description="Show this bot as a tile at the top of the sidebar."
+          checked={bot.pinned}
           disabled={!canUpdate || pending}
-          onClick={() => void save({ featured: !bot.featured })}
-        >
-          <StarIcon className="size-3.5" />
-          {bot.featured ? "Featured" : "Feature"}
-        </Button>
-        <Button
-          size="xs"
-          variant={bot.pinned ? "default" : "outline"}
+          onChange={(pinned) => void save({ pinned })}
+        />
+        <EditorSwitch
+          title="Hidden"
+          description="Keep this bot out of the sidebar. It stays available here."
+          checked={bot.hidden}
           disabled={!canUpdate || pending}
-          onClick={() => void save({ pinned: !bot.pinned })}
-        >
-          <PinIcon className="size-3.5" />
-          {bot.pinned ? "Pinned" : "Pin"}
-        </Button>
-        <Button
-          size="xs"
-          variant={bot.hidden ? "default" : "outline"}
+          onChange={(hidden) => void save({ hidden })}
+        />
+        <EditorSwitch
+          title="Notifications"
+          description="Get notified when this bot finishes or needs input."
+          checked={bot.notificationEnabled}
           disabled={!canUpdate || pending}
-          onClick={() => void save({ hidden: !bot.hidden })}
-        >
-          <EyeOffIcon className="size-3.5" />
-          {bot.hidden ? "Hidden" : "Hide"}
-        </Button>
-      </div>
+          onChange={(notificationEnabled) => void save({ notificationEnabled })}
+        />
+      </EditorGroup>
       <GrokBotPullRequestLinks
         key={identity}
         bot={bot}
@@ -347,5 +361,70 @@ function GrokBotPullRequestRow({
         <Trash2Icon />
       </Button>
     </li>
+  );
+}
+
+function EditorGroup({
+  title,
+  children,
+}: {
+  readonly title: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-2.5">
+      <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
+      <div className="flex flex-col gap-3 rounded-xl border border-border/60 p-3">{children}</div>
+    </section>
+  );
+}
+
+function EditorField({
+  htmlFor,
+  label,
+  hint,
+  children,
+}: {
+  readonly htmlFor: string;
+  readonly label: string;
+  readonly hint?: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={htmlFor}>{label}</Label>
+      {children}
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
+function EditorSwitch({
+  title,
+  description,
+  checked,
+  disabled,
+  onChange,
+}: {
+  readonly title: string;
+  readonly description: string;
+  readonly checked: boolean;
+  readonly disabled: boolean;
+  readonly onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="text-xs text-muted-foreground">{description}</p>
+      </div>
+      <Switch
+        size="sm"
+        checked={checked}
+        disabled={disabled}
+        aria-label={title}
+        onCheckedChange={onChange}
+      />
+    </div>
   );
 }

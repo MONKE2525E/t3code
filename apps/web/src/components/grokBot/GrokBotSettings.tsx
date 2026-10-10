@@ -4,19 +4,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
 import { RefreshCwIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "~/components/ui/select";
 import { Spinner } from "~/components/ui/spinner";
 import {
   SettingsPageContainer,
@@ -30,7 +22,6 @@ import { grokBotsListQuery, grokBotsSetup, grokBotsStatusQuery } from "~/state/g
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { GrokBotAvatar } from "./GrokBotAvatar";
 import { GrokBotLimitations } from "./GrokBotLimitations";
 import { GrokBotProfileEditor } from "./GrokBotProfileEditor";
 import {
@@ -93,7 +84,6 @@ function GrokBotSettingsBody({
   readonly environmentId: EnvironmentId;
   readonly selectedBotId?: string | undefined;
 }) {
-  const navigate = useNavigate();
   const status = useEnvironmentQuery(grokBotsStatusQuery({ environmentId, input: {} }));
   const roster = useEnvironmentQuery(
     status.data?.installed === true && status.data.sessionPresent === true
@@ -198,42 +188,8 @@ function GrokBotSettingsBody({
           />
         ) : (
           <>
-            <SettingsRow
-              title="Bot"
-              description={
-                selected?.label.trim() ||
-                selected?.description.trim() ||
-                "Choose a bot to edit its profile."
-              }
-              control={
-                <Select
-                  value={selected?.id ?? null}
-                  onValueChange={(nextBotId) => {
-                    if (nextBotId === null || nextBotId.length === 0) return;
-                    void navigate({
-                      to: "/settings/grok-bots",
-                      search: (previous) => ({ ...previous, botId: nextBotId }),
-                      hash: "grok-bots-editor",
-                      replace: true,
-                    });
-                  }}
-                >
-                  <SelectTrigger size="sm" className="w-56" aria-label="Bot">
-                    <SelectValue>{selected?.name ?? "Choose a bot"}</SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup className="max-h-72">
-                    {bots.map((bot) => (
-                      <SelectItem key={bot.id} value={bot.id}>
-                        <GrokBotAvatar bot={bot} size="sm" featured={bot.featured} />
-                        {bot.label.trim().length > 0 ? `${bot.name} · ${bot.label}` : bot.name}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-              }
-            />
             {selected ? (
-              <div className="px-3 pb-4 sm:px-4">
+              <div className="px-3 py-4 sm:px-4">
                 <GrokBotProfileEditor
                   key={grokBotSurfaceKey(environmentId, selected.id)}
                   environmentId={environmentId}
