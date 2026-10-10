@@ -5,10 +5,11 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { GrokBotConversation, type EnvironmentId, type GrokBot } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { PanelRightIcon, SettingsIcon } from "lucide-react";
+import { ArrowUpIcon, InfoIcon, SettingsIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
+import { ComposerSurface } from "~/components/chat/ComposerSurface";
 import { Button } from "~/components/ui/button";
 import {
   Empty,
@@ -19,8 +20,6 @@ import {
 } from "~/components/ui/empty";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Spinner } from "~/components/ui/spinner";
-import { Textarea } from "~/components/ui/textarea";
-import { cn } from "~/lib/utils";
 import { useProjects } from "~/state/entities";
 import { grokBotsReadQuery, grokBotsSend } from "~/state/grokBots";
 import { useEnvironmentQuery } from "~/state/query";
@@ -44,7 +43,7 @@ export function GrokBotConversationView({
 }) {
   const conversation = useEnvironmentQuery(grokBotsReadQuery({ environmentId, input: { botId } }));
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
-  const [profileOpen, setProfileOpen] = useState(true);
+  const [profileOpen, setProfileOpen] = useState(false);
   const bot = conversation.data?.bot ?? null;
   const messages = conversation.data?.messages ?? [];
 
@@ -87,7 +86,7 @@ export function GrokBotConversationView({
   const surfaceKey = grokBotSurfaceKey(environmentId, bot.id);
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1">
+    <div className="relative flex min-h-0 min-w-0 flex-1">
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         <GrokBotConversationHeader
           bot={bot}
@@ -107,7 +106,7 @@ export function GrokBotConversationView({
         <GrokBotComposer key={`composer:${surfaceKey}`} environmentId={environmentId} bot={bot} />
       </section>
       {profileOpen ? (
-        <aside className="hidden min-h-0 w-[22rem] shrink-0 overflow-y-auto border-l border-border/60 px-4 py-5 lg:block">
+        <aside className="min-h-0 w-[22rem] shrink-0 overflow-y-auto border-l border-border/60 px-4 py-5 max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:bg-background">
           <GrokBotProfileEditor
             key={`profile:${surfaceKey}`}
             environmentId={environmentId}
@@ -161,13 +160,12 @@ function GrokBotConversationHeader({
       </Button>
       <Button
         size="icon-xs"
-        variant={profileOpen ? "default" : "ghost"}
+        variant={profileOpen ? "ghost" : "ghost-muted"}
         aria-pressed={profileOpen}
-        aria-label={profileOpen ? "Hide profile" : "Show profile"}
-        className="hidden lg:inline-flex"
+        aria-label={profileOpen ? "Hide bot details" : "Show bot details"}
         onClick={onToggleProfile}
       >
-        <PanelRightIcon />
+        <InfoIcon />
       </Button>
     </header>
   );
@@ -203,37 +201,34 @@ function GrokBotMessageList({
 
   return (
     <ScrollArea className="min-h-0 flex-1" scrollFade>
-      <ol className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-5">
-        {messages.map((message) => (
-          <li
-            key={message.id}
-            className={cn("flex gap-3", message.role === "user" ? "flex-row-reverse" : "flex-row")}
-          >
-            {message.role === "assistant" ? <GrokBotAvatar bot={bot} size="sm" /> : null}
-            <div
-              className={cn(
-                "min-w-0 max-w-[min(42rem,85%)] rounded-xl px-3 py-2",
-                message.role === "user"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted/60 text-foreground",
+      <ol className="mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-6 px-4 py-6">
+        {messages.map((message, index) =>
+          message.role === "user" ? (
+            <li key={message.id} className="flex justify-end">
+              <div className="max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+                <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+                  {message.text}
+                </p>
+              </div>
+            </li>
+          ) : (
+            <li key={message.id} className="flex min-w-0 gap-3">
+              {messages[index - 1]?.role === "assistant" ? (
+                <span className="w-6 shrink-0" />
+              ) : (
+                <GrokBotAvatar bot={bot} size="xs" active={message.streaming} className="mt-0.5" />
               )}
-            >
-              {message.role === "assistant" ? (
+              <div className="min-w-0 flex-1">
                 <ChatMarkdown
                   text={message.text}
                   cwd={undefined}
                   environmentId={environmentId}
-                  headingLevelOffset={1}
                   isStreaming={message.streaming}
                 />
-              ) : (
-                <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
-                  {message.text}
-                </p>
-              )}
-            </div>
-          </li>
-        ))}
+              </div>
+            </li>
+          ),
+        )}
         <div ref={endRef} />
       </ol>
     </ScrollArea>
@@ -275,45 +270,57 @@ function GrokBotComposer({
 
   return (
     <form
-      className="border-t border-border/50 px-4 py-3"
+      className="px-4"
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
       }}
     >
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-        <label className="sr-only" htmlFor={`grok-bot-composer-${identity}`}>
-          Message {bot.name}
-        </label>
-        <Textarea
-          id={`grok-bot-composer-${identity}`}
-          size="sm"
-          value={draft}
-          disabled={disabled}
-          maxLength={64000}
-          placeholder={`Message ${bot.name}`}
-          aria-label={`Message ${bot.name}`}
-          aria-busy={sending}
-          onChange={(event) => setDraft(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void submit();
-            }
-          }}
-        />
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground">
-            Enter to send, Shift+Enter for a new line.
-          </p>
-          <Button size="sm" type="submit" disabled={disabled || draft.trim().length === 0}>
-            {sending ? <Spinner size="xs" /> : null}
-            Send
-          </Button>
-        </div>
-        {error ? <p className="text-sm text-destructive-foreground">{error}</p> : null}
-      </div>
+      <ComposerSurface.Shell>
+        <ComposerSurface.Host>
+          <ComposerSurface.Main>
+            <div className="rounded-3xl">
+              <label className="sr-only" htmlFor={`grok-bot-composer-${identity}`}>
+                Message {bot.name}
+              </label>
+              <textarea
+                id={`grok-bot-composer-${identity}`}
+                rows={2}
+                value={draft}
+                disabled={disabled}
+                maxLength={64000}
+                placeholder={`Message ${bot.name}`}
+                aria-busy={sending}
+                className="block max-h-52 min-h-14 w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-sm outline-none placeholder:text-placeholder disabled:opacity-64"
+                onChange={(event) => setDraft(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void submit();
+                  }
+                }}
+              />
+              <div className="flex items-center justify-end gap-2 px-3 pb-3">
+                {error ? (
+                  <p className="min-w-0 flex-1 truncate text-xs text-destructive-foreground">
+                    {error}
+                  </p>
+                ) : null}
+                <button
+                  type="submit"
+                  aria-label="Send message"
+                  disabled={disabled || draft.trim().length === 0}
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-30"
+                >
+                  {sending ? <Spinner size="xs" /> : <ArrowUpIcon className="size-4" />}
+                </button>
+              </div>
+            </div>
+          </ComposerSurface.Main>
+        </ComposerSurface.Host>
+      </ComposerSurface.Shell>
+      <div aria-hidden className="h-4" />
     </form>
   );
 }

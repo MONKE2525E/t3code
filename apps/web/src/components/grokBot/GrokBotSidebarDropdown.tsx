@@ -2,13 +2,15 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, GrokBot } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { EllipsisIcon, EyeOffIcon, PinIcon, SettingsIcon, StarIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import * as Schema from "effect/Schema";
+import { useCallback, useMemo } from "react";
 
 import { CollapsibleSectionHeader } from "~/components/ui/collapsible-section-header";
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Skeleton } from "~/components/ui/skeleton";
 import { SidebarGroup, useSidebar } from "~/components/ui/sidebar";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
 import { useConnectedEnvironmentIds } from "~/state/environments";
 import { grokBotsListQuery, grokBotsStatusQuery, grokBotsUpdate } from "~/state/grokBots";
@@ -23,6 +25,8 @@ import {
 } from "./grokBotPresentation";
 import { useSelectedGrokBotEnvironmentId } from "./useGrokBotEnvironment";
 
+const GROK_BOTS_OPEN_STORAGE_KEY = "t3code:grok-bots-sidebar-open";
+
 export function GrokBotSidebarDropdown() {
   const selectedEnvironmentId = useSelectedGrokBotEnvironmentId();
   const connectedEnvironmentIds = useConnectedEnvironmentIds();
@@ -31,7 +35,7 @@ export function GrokBotSidebarDropdown() {
     connectedEnvironmentIds,
   });
   const environmentId = resolved.kind === "environment" ? resolved.environmentId : null;
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useLocalStorage(GROK_BOTS_OPEN_STORAGE_KEY, true, Schema.Boolean);
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const status = useEnvironmentQuery(
@@ -79,15 +83,11 @@ export function GrokBotSidebarDropdown() {
 
   return (
     <SidebarGroup className="z-[1]">
-      <CollapsibleSectionHeader
-        expanded={open}
-        tone="muted"
-        onClick={() => setOpen((current) => !current)}
-      >
+      <CollapsibleSectionHeader expanded={open} tone="muted" onClick={() => setOpen(!open)}>
         Grok Bots
       </CollapsibleSectionHeader>
       {open ? (
-        <div className="mt-1 max-h-72 overflow-y-auto pr-0.5">
+        <div className="mt-0.5 max-h-60 overflow-y-auto">
           {resolved.kind === "no-environment" ? (
             <p className="px-2 py-2 text-xs text-sidebar-muted-foreground">
               Connect an environment to use Grok Bots.
@@ -144,37 +144,19 @@ export function GrokBotSidebarDropdown() {
               onAction={() => openSettings()}
             />
           ) : (
-            <div className="flex flex-col gap-2 pb-1">
-              {featured.length > 0 ? (
-                <div className="grid grid-cols-2 gap-1.5 px-0.5">
-                  {featured.map((bot) => (
-                    <GrokBotFeaturedTile
-                      key={bot.id}
-                      bot={bot}
-                      selected={bot.id === selectedBotId}
-                      environmentId={resolved.environmentId}
-                      onOpen={() => openBot(bot.id)}
-                      onEdit={() => openSettings(bot.id)}
-                    />
-                  ))}
-                </div>
-              ) : null}
-              {rows.length > 0 ? (
-                <ul className="flex flex-col gap-px">
-                  {rows.map((bot) => (
-                    <li key={bot.id}>
-                      <GrokBotRosterRow
-                        bot={bot}
-                        selected={bot.id === selectedBotId}
-                        environmentId={resolved.environmentId}
-                        onOpen={() => openBot(bot.id)}
-                        onEdit={() => openSettings(bot.id)}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
+            <ul className="flex flex-col gap-px">
+              {[...featured, ...rows].map((bot) => (
+                <li key={bot.id}>
+                  <GrokBotRosterRow
+                    bot={bot}
+                    selected={bot.id === selectedBotId}
+                    environmentId={resolved.environmentId}
+                    onOpen={() => openBot(bot.id)}
+                    onEdit={() => openSettings(bot.id)}
+                  />
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       ) : null}
@@ -212,51 +194,6 @@ function GrokBotSidebarNotice({
   );
 }
 
-function GrokBotFeaturedTile({
-  bot,
-  selected,
-  environmentId,
-  onOpen,
-  onEdit,
-}: {
-  readonly bot: GrokBot;
-  readonly selected: boolean;
-  readonly environmentId: EnvironmentId;
-  readonly onOpen: () => void;
-  readonly onEdit: () => void;
-}) {
-  return (
-    <div
-      className={cn(
-        "group/bot relative flex flex-col items-center rounded-lg px-1.5 py-2 text-center hover:bg-sidebar-row-hover",
-        selected && "bg-sidebar-row-selected text-sidebar-foreground",
-      )}
-    >
-      <button
-        type="button"
-        className="flex w-full flex-col items-center gap-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-        onClick={onOpen}
-      >
-        <GrokBotAvatar bot={bot} size="md" featured={bot.featured} />
-        <span className="w-full truncate text-xs font-medium text-sidebar-foreground">
-          {bot.name}
-        </span>
-        {bot.label.trim().length > 0 ? (
-          <span className="max-w-full truncate rounded-sm bg-sidebar-control-surface px-1 py-px text-3xs leading-3 text-sidebar-muted-foreground">
-            {bot.label}
-          </span>
-        ) : null}
-      </button>
-      <GrokBotRowMenu
-        bot={bot}
-        environmentId={environmentId}
-        onEdit={onEdit}
-        className="absolute top-1 right-1 opacity-0 group-hover/bot:opacity-100 group-focus-within/bot:opacity-100 data-popup-open:opacity-100"
-      />
-    </div>
-  );
-}
-
 function GrokBotRosterRow({
   bot,
   selected,
@@ -273,29 +210,31 @@ function GrokBotRosterRow({
   return (
     <div
       className={cn(
-        "group/bot relative flex items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-sidebar-row-hover",
-        selected && "bg-sidebar-row-selected text-sidebar-foreground",
+        "group/sidebar-row group/bot relative w-full overflow-hidden rounded-md text-sidebar-foreground",
+        selected ? "bg-sidebar-row-active" : "hover:bg-sidebar-row-hover",
       )}
     >
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        aria-current={selected ? "page" : undefined}
+        className="flex w-full min-w-0 cursor-pointer items-center gap-2.5 px-(--sidebar-row-content-inset) py-1.5 text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         onClick={onOpen}
       >
-        <GrokBotAvatar bot={bot} size="sm" />
+        <GrokBotAvatar bot={bot} size="sm" featured={bot.featured} active={selected} />
         <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-sm font-medium text-sidebar-foreground">{bot.name}</span>
+          <span className="flex h-5 min-w-0 items-center gap-1.5">
+            <span className="min-w-0 truncate text-sm">{bot.name}</span>
             {bot.label.trim().length > 0 ? (
-              <span className="max-w-24 truncate rounded-sm bg-sidebar-control-surface px-1 py-px text-3xs leading-3 text-sidebar-muted-foreground">
+              <span className="max-w-[45%] shrink truncate rounded-sm bg-sidebar-control-surface px-1 text-3xs leading-4 text-secondary-label">
                 {bot.label}
               </span>
             ) : null}
+            {bot.pinned ? (
+              <PinIcon aria-hidden className="ml-auto size-3 shrink-0 text-secondary-label" />
+            ) : null}
           </span>
           {bot.description.trim().length > 0 ? (
-            <span className="block truncate text-xs text-sidebar-muted-foreground">
-              {bot.description}
-            </span>
+            <span className="block truncate text-xs text-secondary-label">{bot.description}</span>
           ) : null}
         </span>
       </button>
@@ -303,7 +242,7 @@ function GrokBotRosterRow({
         bot={bot}
         environmentId={environmentId}
         onEdit={onEdit}
-        className="opacity-0 group-hover/bot:opacity-100 group-focus-within/bot:opacity-100 data-popup-open:opacity-100"
+        className="absolute top-1 right-1 rounded-md bg-sidebar opacity-0 group-hover/bot:opacity-100 group-focus-within/bot:opacity-100 data-popup-open:opacity-100"
       />
     </div>
   );

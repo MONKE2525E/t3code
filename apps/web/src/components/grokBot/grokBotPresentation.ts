@@ -3,33 +3,13 @@ import { EnvironmentId, type GrokBot, type PullRequestRef } from "@t3tools/contr
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import type { SearchMiddleware } from "@tanstack/react-router";
 
-export type GrokBotAvatarKind = "blob" | "triangle" | "cloud" | "diamond";
-
-const AVATAR_KIND_BY_TOKEN: Readonly<Record<string, GrokBotAvatarKind>> = {
-  blob: "blob",
-  circle: "blob",
-  round: "blob",
-  oval: "blob",
-  triangle: "triangle",
-  pyramid: "triangle",
-  cone: "triangle",
-  cloud: "cloud",
-  puff: "cloud",
-  diamond: "diamond",
-  square: "diamond",
-  rhombus: "diamond",
-};
-
-const AVATAR_FALLBACK_FILLS = [
-  "#22c55e",
-  "#f8fafc",
-  "#8b5cf6",
-  "#38bdf8",
-  "#f97316",
-  "#fb7185",
-  "#94a3b8",
-  "#2dd4bf",
-] as const;
+import {
+  GROK_BOT_AVATAR_COLOR_ALIASES,
+  GROK_BOT_AVATAR_COLORS,
+  GROK_BOT_AVATAR_KIND_ALIASES,
+  GROK_BOT_AVATAR_KINDS,
+  type GrokBotAvatarKind,
+} from "./grokBotAvatarShapes";
 
 export function compareGrokBots(left: GrokBot, right: GrokBot): number {
   if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
@@ -203,19 +183,35 @@ export function validateGrokBotSettingsSearch(raw: Record<string, unknown>): Gro
 
 export function resolveGrokBotAvatarKind(shape: string): GrokBotAvatarKind {
   const token = shape.trim().toLowerCase();
-  return AVATAR_KIND_BY_TOKEN[token] ?? hashToAvatarKind(token || "blob");
+  const known = GROK_BOT_AVATAR_KINDS.find((kind) => kind === token);
+  if (known) return known;
+  return (
+    GROK_BOT_AVATAR_KIND_ALIASES[token] ??
+    GROK_BOT_AVATAR_KINDS[hashString(token || "blob") % GROK_BOT_AVATAR_KINDS.length]!
+  );
 }
+
+const FALLBACK_COLORS = Object.values(GROK_BOT_AVATAR_COLORS).filter(
+  (value) => value !== GROK_BOT_AVATAR_COLORS.black,
+);
 
 export function resolveGrokBotAvatarFill(color: string): string {
-  const trimmed = color.trim();
-  if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(trimmed)) return trimmed;
-  if (/^[a-z]{3,32}$/i.test(trimmed)) return trimmed;
-  return AVATAR_FALLBACK_FILLS[hashString(trimmed || "bot") % AVATAR_FALLBACK_FILLS.length]!;
+  const token = color.trim().toLowerCase();
+  const named = Object.hasOwn(GROK_BOT_AVATAR_COLORS, token)
+    ? GROK_BOT_AVATAR_COLORS[token as keyof typeof GROK_BOT_AVATAR_COLORS]
+    : GROK_BOT_AVATAR_COLOR_ALIASES[token];
+  if (named) return named;
+  if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/.test(token)) return token;
+  return FALLBACK_COLORS[hashString(token || "bot") % FALLBACK_COLORS.length]!;
 }
 
-function hashToAvatarKind(value: string): GrokBotAvatarKind {
-  const kinds = ["blob", "triangle", "cloud", "diamond"] as const;
-  return kinds[hashString(value) % kinds.length]!;
+/** Eyes are dark on a light body and white on a dark one. */
+export function resolveGrokBotAvatarEyeColor(fill: string): string {
+  const hex = fill.length === 4 ? fill.replace(/[0-9a-f]/g, (c) => c + c).slice(1) : fill.slice(1);
+  const value = Number.parseInt(hex, 16);
+  const luma =
+    (((value >> 16) & 255) * 299 + ((value >> 8) & 255) * 587 + (value & 255) * 114) / 1000;
+  return luma < 70 || fill === GROK_BOT_AVATAR_COLORS.brown ? "#ffffff" : "#16130f";
 }
 
 function hashString(value: string): number {

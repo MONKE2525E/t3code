@@ -4984,7 +4984,6 @@ export default function Sidebar() {
         className="min-h-full"
         fixedHeader={
           <>
-            <GrokBotSidebarDropdown />
             <SidebarGroup className="z-[1]">
               <SidebarThreadHeader
                 searchFieldRef={headerSearchRef}
@@ -5141,6 +5140,7 @@ export default function Sidebar() {
                 onClearSearch={clearThreadSearch}
               />
             </SidebarGroup>
+            <GrokBotSidebarDropdown />
           </>
         }
       >
