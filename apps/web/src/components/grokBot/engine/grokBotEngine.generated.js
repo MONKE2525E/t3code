@@ -599,6 +599,9 @@ function N_(e) {
   const t = Y1[e];
   return `light-dark(${t.light}, ${t.dark})`;
 }
+function F_(e, t) {
+  return Y1[e][t];
+}
 const hs = (e) => ({ x: e, v: 0, t: e });
 const fs = (e, t, n, r) => {
   ((e.v += (-2 * n * t * e.v - t * t * (e.x - e.t)) * r),
@@ -8939,6 +8942,43 @@ function NM(e, t) {
     ? { ink: ns, spot: ns, cutout: !0, inkPaint: e }
     : { ink: ns, spot: ns, cutout: !1, inkPaint: e, spotPaint: t };
 }
+const FM = "var(--grok-bot-still-ink)";
+const Ul = 1e3;
+const Kl = new Map();
+function Xh(e, t = ao) {
+  const n = `${e}:${t}`,
+    r = Kl.get(n);
+  if (r !== void 0) return r;
+  const s = Ul * _r(t),
+    o = s / 2;
+  let i = 0;
+  for (const u of Ka(Xa(e), e, s).body)
+    for (const [l, d] of u) i = Math.max(i, Math.abs(l - o), Math.abs(d - o));
+  const a = Ul / 2,
+    c = i <= a ? t : (t * a) / i;
+  return (Kl.set(n, c), c);
+}
+function jM({ body: e, ink: t, size: n, fill: r = ao, id: s = "grok-bot-still" }) {
+  const o = Xh(e, r),
+    i = n * _r(o),
+    a = Yh((i - n) / 2),
+    c = NM(typeof t == "string" ? t : FM),
+    u = Wh(Xa(e), c, i, s, { displaySize: n }),
+    l =
+      typeof t == "string"
+        ? ""
+        : `<style>svg{--grok-bot-still-ink:${t.light}}@media (prefers-color-scheme:dark){svg{--grok-bot-still-ink:${t.dark}}}</style>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${n}" height="${n}" viewBox="${a} ${a} ${n} ${n}">${l}${u}</svg>`;
+}
+function B_(e) {
+  return `data:image/svg+xml,${encodeURIComponent(jM(e))}`;
+}
+function Xa(e) {
+  return oh({ body: e }).frame();
+}
+function Yh(e) {
+  return Math.round(e * 1e3) / 1e3;
+}
 function ho(e, t) {
   return e + t;
 }
@@ -9000,4 +9040,6 @@ export {
   ao as DEFAULT_FILL,
   NM as createAppearance,
   N_ as inkForColor,
+  F_ as inkForTheme,
+  Nw as recipeByName,
 };

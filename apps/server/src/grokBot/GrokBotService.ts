@@ -10,6 +10,7 @@ import {
   GrokBotPullRequest,
   type PullRequestRef,
 } from "@t3tools/contracts";
+import { defaultGrokBotAvatarColor, defaultGrokBotAvatarShape } from "./defaultAvatar.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -213,8 +214,8 @@ const make = Effect.gen(function* () {
     name: bot.name,
     label: bot.title ?? "",
     description: bot.description ?? "",
-    avatarShape: bot.avatarShape ?? "blob",
-    avatarColor: bot.avatarColor ?? "gray",
+    avatarShape: bot.avatarShape ?? defaultGrokBotAvatarShape(bot.id),
+    avatarColor: bot.avatarColor ?? defaultGrokBotAvatarColor(bot.id),
     notificationEnabled: bot.notifyOnAgentUpdates ?? true,
     hidden: bot.hiddenFromSidebar ?? false,
     pinned: preferences[bot.id]?.pinned ?? true,

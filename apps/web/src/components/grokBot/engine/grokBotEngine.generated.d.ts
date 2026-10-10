@@ -17,4 +17,10 @@ export const BotRenderer: ComponentType<{
   readonly isFollowingPointer?: boolean;
   readonly maxFrameRate?: number;
   readonly resolution?: number;
+  readonly clip?: unknown;
 }>;
+
+export function inkForTheme(color: string, theme: "light" | "dark"): string;
+
+/** A named motion clip from the engine, for example "Idle_B". */
+export function recipeByName(name: string): unknown;

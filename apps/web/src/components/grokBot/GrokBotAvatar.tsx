@@ -10,12 +10,15 @@ import {
   bodyForShape,
   createAppearance,
   inkForColor,
+  recipeByName,
 } from "./engine/grokBotEngine.generated.js";
 import type { GrokBotActivity } from "./grokBotActivity";
 import { GROK_BOT_AVATAR_COLORS } from "./grokBotAvatarShapes";
 import { resolveGrokBotAvatarFill, resolveGrokBotAvatarKind } from "./grokBotPresentation";
 
 const SIZE_PX = { xs: 24, sm: 32, md: 40, lg: 72 } as const;
+
+const RESTING_CLIP = recipeByName("Idle_B");
 
 // Eyes are cut out of the body, so they show whatever is behind the avatar.
 const APPEARANCE = createAppearance("var(--grok-bot-ink)");
@@ -49,7 +52,7 @@ export function GrokBotAvatar({
   const pixels = SIZE_PX[size];
   const id = `grok-bot-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const kind = resolveGrokBotAvatarKind(bot.avatarShape);
-
+  const body = bodyForShape(kind);
   return (
     <span
       aria-hidden
@@ -63,15 +66,19 @@ export function GrokBotAvatar({
       }
     >
       <BotRenderer
+        // Remount between rest and activity: the engine's own rest pose is a
+        // tilted logo pose, while the app's resting bots hold the first frame
+        // of the Idle_B clip (upright, eyes looking up).
+        key={state === undefined ? "rest" : "active"}
         appearance={APPEARANCE}
-        body={bodyForShape(kind)}
+        body={body}
         fill={DEFAULT_FILL}
         id={id}
         seed={bot.name}
         size={pixels}
-        state={state ?? "idle"}
         isPlaying={state !== undefined}
         maxFrameRate={30}
+        {...(state === undefined ? { clip: RESTING_CLIP } : { state })}
       />
       {featured ? (
         <span className="absolute -right-0.5 -bottom-0.5 flex size-3.5 items-center justify-center rounded-full bg-warning text-warning-foreground shadow-sm">
