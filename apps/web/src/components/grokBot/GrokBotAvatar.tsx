@@ -11,6 +11,7 @@ import {
   createAppearance,
   inkForColor,
 } from "./engine/grokBotEngine.generated.js";
+import type { GrokBotActivity } from "./grokBotActivity";
 import { GROK_BOT_AVATAR_COLORS } from "./grokBotAvatarShapes";
 import { resolveGrokBotAvatarFill, resolveGrokBotAvatarKind } from "./grokBotPresentation";
 
@@ -28,21 +29,21 @@ function resolveInk(color: string): string {
 
 /**
  * A Grok Bot face, drawn by the same procedural engine as the Grok Bot app
- * (see `engine/`). It animates on its own (blinks, glances, idle motion), stops
- * when scrolled off screen, and settles under `prefers-reduced-motion`.
- * `active` makes the bot emphasized, as the app does for the selected bot.
+ * (see `engine/`). Like the app, it rests in a still pose and only moves while
+ * `state` names something the bot is doing; the engine also stops it while off
+ * screen.
  */
 export function GrokBotAvatar({
   bot,
   size = "md",
   featured = false,
-  active = false,
+  state,
   className,
 }: {
   readonly bot: Pick<GrokBot, "name" | "avatarShape" | "avatarColor">;
   readonly size?: keyof typeof SIZE_PX;
   readonly featured?: boolean;
-  readonly active?: boolean;
+  readonly state?: GrokBotActivity | undefined;
   readonly className?: string;
 }) {
   const pixels = SIZE_PX[size];
@@ -68,8 +69,8 @@ export function GrokBotAvatar({
         id={id}
         seed={bot.name}
         size={pixels}
-        state="idle"
-        isEmphasized={active}
+        state={state ?? "idle"}
+        isPlaying={state !== undefined}
         maxFrameRate={30}
       />
       {featured ? (

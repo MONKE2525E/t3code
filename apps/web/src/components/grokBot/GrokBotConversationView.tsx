@@ -26,6 +26,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { GrokBotAvatar } from "./GrokBotAvatar";
+import { getGrokBotActivity, setGrokBotActivity, useGrokBotActivity } from "./grokBotActivity";
 import { GrokBotLimitations } from "./GrokBotLimitations";
 import { GrokBotProfileEditor } from "./GrokBotProfileEditor";
 import {
@@ -33,6 +34,12 @@ import {
   grokBotSettingsDestinationSearch,
   grokBotSurfaceKey,
 } from "./grokBotPresentation";
+
+const FINISHED_REACTION_MS = 2800;
+const CELEBRATE_REACTION_MS = 3600;
+const FAILED_REACTION_MS = 3200;
+/** Longest a sent message waits on the bot before it goes back to rest. */
+const THINKING_TIMEOUT_MS = 90_000;
 
 export function GrokBotConversationView({
   environmentId,
@@ -46,8 +53,46 @@ export function GrokBotConversationView({
   const [profileOpen, setProfileOpen] = useState(false);
   const bot = conversation.data?.bot ?? null;
   const messages = conversation.data?.messages ?? [];
+  const surfaceKey = grokBotSurfaceKey(environmentId, botId);
+  const loading = conversation.isPending && conversation.data === null;
+  const streaming = messages.at(-1)?.streaming === true;
+  const wasStreaming = useRef(false);
+  const linkedPullRequests = bot?.pullRequests.length ?? null;
+  const previousPullRequests = useRef(linkedPullRequests);
 
-  if (conversation.isPending && conversation.data === null) {
+  // The bot rests unless something is happening, so each phase of a chat sets
+  // the activity the avatar plays; one-shot reactions clear themselves.
+  useEffect(() => {
+    if (loading) setGrokBotActivity(surfaceKey, "loading");
+    else if (getGrokBotActivity(surfaceKey) === "loading") setGrokBotActivity(surfaceKey, null);
+  }, [loading, surfaceKey]);
+  useEffect(() => {
+    if (streaming) {
+      setGrokBotActivity(surfaceKey, "streaming");
+    } else if (wasStreaming.current) {
+      setGrokBotActivity(surfaceKey, "finished", FINISHED_REACTION_MS);
+    }
+    wasStreaming.current = streaming;
+  }, [streaming, surfaceKey]);
+  // A merged pull request drops off the bot's list.
+  useEffect(() => {
+    const previous = previousPullRequests.current;
+    previousPullRequests.current = linkedPullRequests;
+    if (previous !== null && linkedPullRequests !== null && linkedPullRequests < previous) {
+      setGrokBotActivity(surfaceKey, "celebrate", CELEBRATE_REACTION_MS);
+    }
+  }, [linkedPullRequests, surfaceKey]);
+  // Leaving the chat ends what only this view could observe; a pending
+  // "thinking" survives so the sidebar keeps showing the bot at work.
+  useEffect(
+    () => () => {
+      const current = getGrokBotActivity(surfaceKey);
+      if (current === "loading" || current === "streaming") setGrokBotActivity(surfaceKey, null);
+    },
+    [surfaceKey],
+  );
+
+  if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <Spinner size="lg" tone="muted" />
@@ -82,8 +127,6 @@ export function GrokBotConversationView({
       </Empty>
     );
   }
-
-  const surfaceKey = grokBotSurfaceKey(environmentId, bot.id);
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1">
@@ -132,9 +175,10 @@ function GrokBotConversationHeader({
   readonly onToggleProfile: () => void;
 }) {
   const navigate = useNavigate();
+  const activity = useGrokBotActivity(grokBotSurfaceKey(environmentId, bot.id));
   return (
     <header className="flex h-[var(--workspace-topbar-height)] shrink-0 items-center gap-3 border-b border-border/50 px-4">
-      <GrokBotAvatar bot={bot} size="sm" featured={bot.featured} />
+      <GrokBotAvatar bot={bot} size="sm" featured={bot.featured} state={activity} />
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-sm font-medium">{bot.name}</h1>
         {bot.label.trim().length > 0 ? (
@@ -216,7 +260,12 @@ function GrokBotMessageList({
               {messages[index - 1]?.role === "assistant" ? (
                 <span className="w-6 shrink-0" />
               ) : (
-                <GrokBotAvatar bot={bot} size="xs" active={message.streaming} className="mt-0.5" />
+                <GrokBotAvatar
+                  bot={bot}
+                  size="xs"
+                  state={message.streaming ? "streaming" : undefined}
+                  className="mt-0.5"
+                />
               )}
               <div className="min-w-0 flex-1">
                 <ChatMarkdown
@@ -255,16 +304,22 @@ function GrokBotComposer({
     if (message.length === 0 || disabled) return;
     setSending(true);
     setError(null);
+    setGrokBotActivity(identity, "sending");
     const result = await sendMessage({
       environmentId,
       input: { botId: bot.id, message },
     });
     setSending(false);
     if (result._tag === "Failure") {
-      if (isAtomCommandInterrupted(result)) return;
+      if (isAtomCommandInterrupted(result)) {
+        setGrokBotActivity(identity, null);
+        return;
+      }
+      setGrokBotActivity(identity, "failed", FAILED_REACTION_MS);
       setError(grokBotFailureMessage(squashAtomCommandFailure(result)));
       return;
     }
+    setGrokBotActivity(identity, "thinking", THINKING_TIMEOUT_MS);
     setDraft("");
   };
 

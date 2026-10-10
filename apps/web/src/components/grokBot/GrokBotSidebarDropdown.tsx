@@ -18,8 +18,10 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { GrokBotAvatar } from "./GrokBotAvatar";
+import { useGrokBotActivity } from "./grokBotActivity";
 import {
   grokBotSettingsDestinationSearch,
+  grokBotSurfaceKey,
   partitionGrokBotRoster,
   resolveGrokBotSelectedEnvironment,
 } from "./grokBotPresentation";
@@ -207,6 +209,7 @@ function GrokBotRosterRow({
   readonly onOpen: () => void;
   readonly onEdit: () => void;
 }) {
+  const activity = useGrokBotActivity(grokBotSurfaceKey(environmentId, bot.id));
   return (
     <div
       className={cn(
@@ -220,7 +223,7 @@ function GrokBotRosterRow({
         className="flex w-full min-w-0 cursor-pointer items-center gap-2.5 px-(--sidebar-row-content-inset) py-1.5 text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         onClick={onOpen}
       >
-        <GrokBotAvatar bot={bot} size="sm" featured={bot.featured} active={selected} />
+        <GrokBotAvatar bot={bot} size="sm" featured={bot.featured} state={activity} />
         <span className="min-w-0 flex-1">
           <span className="flex h-5 min-w-0 items-center gap-1.5">
             <span className="min-w-0 truncate text-sm">{bot.name}</span>
