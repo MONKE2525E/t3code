@@ -205,15 +205,6 @@ export function resolveGrokBotAvatarFill(color: string): string {
   return FALLBACK_COLORS[hashString(token || "bot") % FALLBACK_COLORS.length]!;
 }
 
-/** Eyes are dark on a light body and white on a dark one. */
-export function resolveGrokBotAvatarEyeColor(fill: string): string {
-  const hex = fill.length === 4 ? fill.replace(/[0-9a-f]/g, (c) => c + c).slice(1) : fill.slice(1);
-  const value = Number.parseInt(hex, 16);
-  const luma =
-    (((value >> 16) & 255) * 299 + ((value >> 8) & 255) * 587 + (value & 255) * 114) / 1000;
-  return luma < 70 || fill === GROK_BOT_AVATAR_COLORS.brown ? "#ffffff" : "#16130f";
-}
-
 function hashString(value: string): number {
   let hash = 0;
   for (const char of value) {

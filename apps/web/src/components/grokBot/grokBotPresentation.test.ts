@@ -9,7 +9,6 @@ import {
   isGitHubChangeRequestHost,
   isGrokBotPullRequestUrl,
   partitionGrokBotRoster,
-  resolveGrokBotAvatarEyeColor,
   resolveGrokBotAvatarFill,
   resolveGrokBotAvatarKind,
   resolveGrokBotSelectedEnvironment,
@@ -261,11 +260,6 @@ describe("avatar helpers", () => {
     expect(resolveGrokBotAvatarFill("violet")).toBe("#9159fe");
     expect(resolveGrokBotAvatarFill("#8b5cf6")).toBe("#8b5cf6");
     expect(resolveGrokBotAvatarFill("not-a-color")).toMatch(/^#/);
-  });
-
-  it("puts white eyes on dark bodies and dark eyes on bright ones", () => {
-    expect(resolveGrokBotAvatarEyeColor("#000000")).toBe("#ffffff");
-    expect(resolveGrokBotAvatarEyeColor("#777777")).not.toBe("#ffffff");
   });
 });
 
